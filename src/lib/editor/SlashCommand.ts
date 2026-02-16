@@ -1,4 +1,4 @@
-import { Extension } from '@tiptap/core';
+import { Extension, Editor, Range } from '@tiptap/core';
 import Suggestion from '@tiptap/suggestion';
 import { getSuggestionConfig } from '@/lib/editor/suggestion';
 import { CommandItem } from '@/components/editor/CommandMenu';
@@ -11,7 +11,7 @@ export const SlashCommand = Extension.create({
             suggestion: {
                 char: '/',
                 startOfLine: false,
-                command: ({ editor, range, props }: any) => {
+                command: ({ editor, range, props }: { editor: Editor; range: Range; props: any }) => {
                     props.command({ editor, range });
                 },
             },
@@ -25,7 +25,7 @@ export const SlashCommand = Extension.create({
                 description: 'Just start typing with plain text',
                 icon: '📝',
                 aliases: ['p', 'paragraph'],
-                command: ({ editor, range }: any) => {
+                command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).setParagraph().run();
                 },
             },
@@ -34,7 +34,7 @@ export const SlashCommand = Extension.create({
                 description: 'Big section heading',
                 icon: 'H1',
                 aliases: ['h1', 'big', 'large'],
-                command: ({ editor, range }: any) => {
+                command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).setHeading({ level: 1 }).run();
                 },
             },
@@ -43,7 +43,7 @@ export const SlashCommand = Extension.create({
                 description: 'Medium section heading',
                 icon: 'H2',
                 aliases: ['h2', 'medium'],
-                command: ({ editor, range }: any) => {
+                command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).setHeading({ level: 2 }).run();
                 },
             },
@@ -52,7 +52,7 @@ export const SlashCommand = Extension.create({
                 description: 'Small section heading',
                 icon: 'H3',
                 aliases: ['h3', 'small'],
-                command: ({ editor, range }: any) => {
+                command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).setHeading({ level: 3 }).run();
                 },
             },
@@ -61,7 +61,7 @@ export const SlashCommand = Extension.create({
                 description: 'Create a simple bullet list',
                 icon: '•',
                 aliases: ['ul', 'bullets', 'list'],
-                command: ({ editor, range }: any) => {
+                command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).toggleBulletList().run();
                 },
             },
@@ -70,7 +70,7 @@ export const SlashCommand = Extension.create({
                 description: 'Create a numbered list',
                 icon: '1.',
                 aliases: ['ol', 'numbers', '1', 'list'],
-                command: ({ editor, range }: any) => {
+                command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).toggleOrderedList().run();
                 },
             },
@@ -79,7 +79,7 @@ export const SlashCommand = Extension.create({
                 description: 'Track tasks with a checklist',
                 icon: '☑',
                 aliases: ['todo', 'check', 'task'],
-                command: ({ editor, range }: any) => {
+                command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).toggleTaskList().run();
                 },
             },
@@ -88,7 +88,7 @@ export const SlashCommand = Extension.create({
                 description: 'Capture a quote',
                 icon: '"',
                 aliases: ['blockquote', 'quote'],
-                command: ({ editor, range }: any) => {
+                command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).toggleBlockquote().run();
                 },
             },
@@ -97,7 +97,7 @@ export const SlashCommand = Extension.create({
                 description: 'Display code with syntax highlighting',
                 icon: '</>',
                 aliases: ['code', 'pre', 'snippet'],
-                command: ({ editor, range }: any) => {
+                command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).toggleCodeBlock().run();
                 },
             },
@@ -106,7 +106,7 @@ export const SlashCommand = Extension.create({
                 description: 'Visually divide blocks',
                 icon: '—',
                 aliases: ['hr', 'line', 'divider', 'separator'],
-                command: ({ editor, range }: any) => {
+                command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).setHorizontalRule().run();
                 },
             },

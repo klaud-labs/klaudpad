@@ -14,11 +14,12 @@ import {
   serverTimestamp,
   limit,
   getDocs,
+  Timestamp,
 } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
-type NoteListItem = { id: string; title: string | null; updated_at: any };
+type NoteListItem = { id: string; title: string | null; updated_at: Timestamp | null };
 
 type NotesDrawerProps = {
   open: boolean;

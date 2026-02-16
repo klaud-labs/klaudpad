@@ -3,12 +3,14 @@
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import { Editor } from '@tiptap/react';
 
+import { Range } from '@tiptap/core';
+
 export type CommandItem = {
     title: string;
     description: string;
     icon: string;
     aliases?: string[];
-    command: (props: { editor: Editor; range: any }) => void;
+    command: (props: { editor: Editor; range: Range }) => void;
 };
 
 export type CommandMenuProps = {

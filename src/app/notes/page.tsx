@@ -2,12 +2,12 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { db, auth } from '@/lib/firebase';
-import { collection, query, orderBy, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { NotesDrawer } from '@/components/notes/NotesDrawer';
 
-type Row = { id: string; title: string; updated_at: any };
+type Row = { id: string; title: string; updated_at: Timestamp | null };
 
 export default function Notes() {
   const router = useRouter();

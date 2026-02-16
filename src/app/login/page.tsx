@@ -8,7 +8,6 @@ import {
   signInWithRedirect,
   GoogleAuthProvider,
   sendPasswordResetEmail,
-  confirmPasswordReset,
   onAuthStateChanged,
   getRedirectResult,
 } from 'firebase/auth';
@@ -39,8 +38,9 @@ export default function Login() {
         await signInWithEmailAndPassword(auth, email, password);
       }
       router.replace('/notes');
-    } catch (err: any) {
-      setError(err.message || `Failed to ${isSignUp ? 'sign up' : 'sign in'}`);
+    } catch (err: unknown) {
+      const error = err as Error;
+      setError(error.message || `Failed to ${isSignUp ? 'sign up' : 'sign in'}`);
     } finally {
       setLoading(false);
     }
@@ -55,8 +55,9 @@ export default function Login() {
       // Use redirect instead of popup to avoid sessionStorage issues
       await signInWithRedirect(auth, provider);
       // Note: The redirect will happen, and onAuthStateChanged will handle the rest
-    } catch (err: any) {
-      setError(err.message || 'Failed to sign in with Google');
+    } catch (err: unknown) {
+      const error = err as Error;
+      setError(error.message || 'Failed to sign in with Google');
       setLoading(false);
     }
   };
@@ -69,8 +70,9 @@ export default function Login() {
     try {
       await sendPasswordResetEmail(auth, resetEmail);
       setResetSent(true);
-    } catch (err: any) {
-      setResetError(err.message || 'Failed to send reset email');
+    } catch (err: unknown) {
+      const error = err as Error;
+      setResetError(error.message || 'Failed to send reset email');
     } finally {
       setResetLoading(false);
     }
@@ -224,7 +226,7 @@ export default function Login() {
             {resetSent ? (
               <div className="space-y-6">
                 <p className="text-sm klaud-muted leading-relaxed">
-                  We've dispatched a recovery link to <span className="font-bold text-[color:var(--klaud-accent)]">{resetEmail}</span>.
+                  We&apos;ve dispatched a recovery link to <span className="font-bold text-[color:var(--klaud-accent)]">{resetEmail}</span>.
                 </p>
                 <button
                   onClick={() => { setResetOpen(false); setResetSent(false); }}

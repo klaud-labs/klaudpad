@@ -64,8 +64,8 @@ export const AbbrevExpand = Extension.create({
   addKeyboardShortcuts() {
     const trigger = () => {
       const { state } = this.editor;
-      const { from } = state.selection as any;
-      const $pos: any = state.selection.$from;
+      const { from, $from } = state.selection;
+      const $pos = $from;
       const lineStart = $pos.before($pos.depth);
       const lineText = state.doc.textBetween(lineStart, from);
       if (apply(lineText, this.editor)) {

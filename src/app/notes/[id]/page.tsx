@@ -1,12 +1,11 @@
 'use client';
 
-import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { NotesDrawer } from '@/components/notes/NotesDrawer';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
-import { db, auth } from '@/lib/firebase';
+import { db } from '@/lib/firebase';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { Editor, EditorContent, useEditor } from '@tiptap/react';
+import { Editor, EditorContent, useEditor, JSONContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
@@ -71,10 +70,9 @@ export default function NotePage({ params }: { params: Promise<RouteParams> }) {
     return () => unsubscribe();
   }, [noteId, editor, user]);
 
-  // Debounced save to Firestore
   const saveContent = useMemo(
     () =>
-      debounce(async (content: any) => {
+      debounce(async (content: JSONContent) => {
         if (!noteId || !user) return;
 
         try {
@@ -119,13 +117,13 @@ export default function NotePage({ params }: { params: Promise<RouteParams> }) {
     editor.on('update', handler);
     return () => {
       editor.off('update', handler);
-      (saveContent as any)?.cancel?.();
+      (saveContent as any).cancel();
     };
   }, [editor, saveContent]);
 
   useEffect(() => {
     return () => {
-      (saveTitle as any)?.cancel?.();
+      (saveTitle as any).cancel();
     };
   }, [saveTitle]);
 
