@@ -15,6 +15,7 @@ import {
   limit,
   getDocs,
   Timestamp,
+  where,
 } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -38,6 +39,7 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
 
     const q = query(
       collection(db, 'notes'),
+      where('owner', '==', auth.currentUser.uid),
       orderBy('updated_at', 'desc')
     );
 
@@ -91,7 +93,14 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
       setDeletingId(null);
       setConfirmingId(null);
 
-      const q = query(collection(db, 'notes'), orderBy('updated_at', 'desc'), limit(1));
+      if (!auth.currentUser) return;
+
+      const q = query(
+        collection(db, 'notes'),
+        where('owner', '==', auth.currentUser.uid),
+        orderBy('updated_at', 'desc'),
+        limit(1)
+      );
       const snapshot = await getDocs(q);
       const first = snapshot.docs[0]?.id;
 
