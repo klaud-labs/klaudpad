@@ -19,6 +19,7 @@ import {
 } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { usePwaInstall } from '@/hooks/usePwaInstall';
 
 type NoteListItem = { id: string; title: string | null; updated_at: Timestamp | null; folder_id: string | null };
 type FolderListItem = { id: string; name: string; created_at: Timestamp | null };
@@ -36,9 +37,12 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const [showInstallHelp, setShowInstallHelp] = useState(false);
+  const [installBusy, setInstallBusy] = useState(false);
   const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const [dragOverUnsorted, setDragOverUnsorted] = useState(false);
+  const { canPromptInstall, isIosManualInstallAvailable, isInstalled, promptInstall } = usePwaInstall();
   const rawUserName = auth.currentUser?.displayName?.trim() || auth.currentUser?.email?.split('@')[0] || 'User';
   const userDisplayName = rawUserName.split(/\s+/).filter(Boolean)[0] || 'User';
   const userInitials = userDisplayName
@@ -279,6 +283,21 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
     []
   );
 
+  const showInstallAction = !isInstalled && (canPromptInstall || isIosManualInstallAvailable);
+
+  const handleInstallAction = useCallback(async () => {
+    if (canPromptInstall) {
+      setInstallBusy(true);
+      await promptInstall();
+      setInstallBusy(false);
+      return;
+    }
+
+    if (isIosManualInstallAvailable) {
+      setShowInstallHelp(true);
+    }
+  }, [canPromptInstall, isIosManualInstallAvailable, promptInstall]);
+
   const renderNoteItem = (note: NoteListItem) => {
     const isActive = note.id === currentNoteId;
     return (
@@ -511,6 +530,24 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
               </button>
             </div>
           </div>
+          {showInstallAction && (
+            <button
+              type="button"
+              onClick={() => {
+                void handleInstallAction();
+              }}
+              disabled={installBusy}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border klaud-border bg-[color:var(--klaud-surface)] px-4 py-2.5 text-xs font-black uppercase tracking-[0.14em] klaud-text transition-all hover:border-[color:var(--klaud-accent)] hover:text-[color:var(--klaud-accent)] disabled:opacity-60"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M12 3v12m0 0 4-4m-4 4-4-4" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" strokeLinecap="round" />
+              </svg>
+              <span>
+                {canPromptInstall ? (installBusy ? 'Opening...' : 'Install App') : 'Add to Home Screen'}
+              </span>
+            </button>
+          )}
         </div>
       </aside>
 
@@ -570,6 +607,30 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
                 Stay signed in
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showInstallHelp && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-xl px-4 animate-in fade-in duration-200">
+          <div className="klaud-surface w-full max-w-[340px] rounded-3xl border klaud-border p-8 shadow-2xl scale-in-center">
+            <div className="h-12 w-12 rounded-2xl bg-[color:var(--klaud-accent)]/10 flex items-center justify-center mb-6 text-[color:var(--klaud-accent)] mx-auto">
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M12 3v12m0 0 4-4m-4 4-4-4" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" strokeLinecap="round" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold klaud-text text-center mb-2 tracking-tight">Install on iPhone</h2>
+            <p className="text-sm klaud-muted text-center leading-relaxed">
+              Tap Share in Safari, then choose Add to Home Screen.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowInstallHelp(false)}
+              className="mt-7 w-full py-3 rounded-2xl bg-[color:var(--klaud-accent)] text-white font-bold text-sm hover:opacity-90 transition-opacity shadow-lg shadow-cyan-500/20"
+            >
+              Got it
+            </button>
           </div>
         </div>
       )}
