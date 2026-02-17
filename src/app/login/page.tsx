@@ -5,6 +5,7 @@ import { auth } from '@/lib/firebase';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signInWithPopup,
   signInWithRedirect,
   GoogleAuthProvider,
   sendPasswordResetEmail,
@@ -86,10 +87,30 @@ export default function Login() {
 
     try {
       const provider = new GoogleAuthProvider();
-      // Use redirect instead of popup to avoid sessionStorage issues
-      await signInWithRedirect(auth, provider);
-      // Note: The redirect will happen, and onAuthStateChanged will handle the rest
+      provider.setCustomParameters({ prompt: 'select_account' });
+
+      // Popup is more reliable for preserving auth state in this app flow.
+      await signInWithPopup(auth, provider);
+      router.replace('/notes');
     } catch (err: unknown) {
+      const code = typeof err === 'object' && err && 'code' in err
+        ? String((err as { code?: string }).code || '')
+        : '';
+
+      // Fallback for browsers/environments where popup is blocked.
+      if (code === 'auth/popup-blocked' || code === 'auth/cancelled-popup-request') {
+        try {
+          const provider = new GoogleAuthProvider();
+          provider.setCustomParameters({ prompt: 'select_account' });
+          await signInWithRedirect(auth, provider);
+          return;
+        } catch (redirectErr: unknown) {
+          setError(getFriendlyAuthError(redirectErr, 'Could not continue with Google.'));
+          setLoading(false);
+          return;
+        }
+      }
+
       setError(getFriendlyAuthError(err, 'Could not continue with Google.'));
       setLoading(false);
     }
@@ -112,12 +133,18 @@ export default function Login() {
 
   useEffect(() => {
     // Handle redirect result from Google Sign-In
-    getRedirectResult(auth).catch((err) => {
-      if (err.code !== 'auth/popup-closed-by-user') {
-        setError(getFriendlyAuthError(err, 'Could not complete sign in.'));
-      }
-      setLoading(false);
-    });
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          router.replace('/notes');
+        }
+      })
+      .catch((err) => {
+        if (err.code !== 'auth/popup-closed-by-user') {
+          setError(getFriendlyAuthError(err, 'Could not complete sign in.'));
+        }
+        setLoading(false);
+      });
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {

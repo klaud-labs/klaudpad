@@ -39,8 +39,9 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
   const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const [dragOverUnsorted, setDragOverUnsorted] = useState(false);
-  const userDisplayName = auth.currentUser?.displayName?.trim() || auth.currentUser?.email?.split('@')[0] || 'User';
-  const userInitials = (auth.currentUser?.displayName?.trim() || auth.currentUser?.email || 'U')
+  const rawUserName = auth.currentUser?.displayName?.trim() || auth.currentUser?.email?.split('@')[0] || 'User';
+  const userDisplayName = rawUserName.split(/\s+/).filter(Boolean)[0] || 'User';
+  const userInitials = userDisplayName
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)

@@ -35,6 +35,7 @@ export default function Notes() {
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const [dragOverUnsorted, setDragOverUnsorted] = useState(false);
   const displayName = user?.displayName?.trim() || user?.email?.split('@')[0] || '';
+  const firstName = displayName.split(/\s+/).filter(Boolean)[0] || '';
 
   const normalizeFolderId = (value: unknown): string | null => {
     if (typeof value !== 'string') return null;
@@ -369,7 +370,7 @@ export default function Notes() {
           <div className="max-w-6xl mx-auto">
             <div className="mb-10 text-center lg:text-left">
               <h2 className="text-4xl font-black tracking-tight klaud-text mb-2">
-                {displayName ? `Welcome Back, ${displayName}.` : 'Welcome Back.'}
+                {firstName ? `Welcome Back, ${firstName}.` : 'Welcome Back.'}
               </h2>
               <p className="klaud-muted opacity-60 font-medium">Capture your thoughts, organize your world.</p>
             </div>
