@@ -48,11 +48,11 @@ export function MobileInstallBanner() {
 
   return (
     <div className="fixed inset-x-3 bottom-3 z-[80] sm:inset-x-6 sm:bottom-5">
-      <div className="rounded-2xl border klaud-border bg-[color:var(--klaud-glass)]/95 p-4 shadow-2xl backdrop-blur-xl">
+      <div className="rounded-[var(--rLg)] border klaud-border bg-[color:var(--surface)] p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.14em] text-[color:var(--klaud-accent)]">
-              Install KlaudPad
+              Install Tulis
             </p>
             <p className="mt-1 text-sm font-medium klaud-text">
               {isIosManual
@@ -87,7 +87,7 @@ export function MobileInstallBanner() {
                   dismissBanner();
                 }
               }}
-              className="rounded-xl bg-gradient-to-r from-[color:var(--klaud-accent)] to-[color:var(--klaud-secondary)] px-3.5 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-lg shadow-cyan-500/20 disabled:opacity-60"
+              className="rounded-[var(--rSm)] bg-[color:var(--accent)] px-3.5 py-2 text-xs font-bold uppercase tracking-wide text-white transition-colors hover:bg-[color:var(--accentHover)] disabled:opacity-60"
             >
               {isSubmitting ? 'Opening...' : 'Install App'}
             </button>

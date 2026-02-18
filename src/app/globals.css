@@ -1,43 +1,69 @@
 @import "tailwindcss";
 
 :root {
+  --accent: #4f46e5;
+  --accentHover: #4338ca;
+  --focusRing: rgba(79, 70, 229, 0.35);
+
+  --rSm: 10px;
+  --rMd: 14px;
+  --rLg: 18px;
+
+  --tagRed: #dc2626;
+  --tagYellow: #ca8a04;
+  --tagGreen: #16a34a;
+}
+
+:root,
+:root[data-theme='light'] {
   color-scheme: light;
-  --klaud-accent: #0ea5e9;
-  --klaud-secondary: #8b5cf6;
-  --klaud-bg: #fcfcfd;
-  --klaud-surface: #ffffff;
-  --klaud-text: #0f172a;
-  --klaud-muted: #64748b;
-  --klaud-border: #e2e8f0;
-  --klaud-glass: rgba(255, 255, 255, 0.7);
-  --klaud-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface2: #f1f5f9;
+  --border: rgba(15, 23, 42, 0.12);
+  --border2: rgba(15, 23, 42, 0.08);
+  --text: rgba(15, 23, 42, 0.92);
+  --text2: rgba(15, 23, 42, 0.62);
+  --text3: rgba(15, 23, 42, 0.4);
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --klaud-accent: #22d3ee;
-  --klaud-secondary: #a78bfa;
-  --klaud-bg: #09090b;
-  --klaud-surface: #121215;
-  --klaud-text: #f8fafc;
-  --klaud-muted: #94a3b8;
-  --klaud-border: #27272a;
-  --klaud-glass: rgba(9, 9, 11, 0.7);
-  --klaud-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.4);
+  --bg: #0b0f14;
+  --surface: #0f172a;
+  --surface2: #111827;
+  --border: rgba(255, 255, 255, 0.1);
+  --border2: rgba(255, 255, 255, 0.07);
+  --text: rgba(255, 255, 255, 0.92);
+  --text2: rgba(255, 255, 255, 0.62);
+  --text3: rgba(255, 255, 255, 0.4);
+}
+
+/* Legacy aliases used across existing components */
+:root {
+  --klaud-accent: var(--accent);
+  --klaud-secondary: var(--accent);
+  --klaud-bg: var(--bg);
+  --klaud-surface: var(--surface);
+  --klaud-text: var(--text);
+  --klaud-muted: var(--text2);
+  --klaud-border: var(--border);
+  --klaud-glass: var(--surface);
+  --klaud-shadow: none;
 }
 
 @theme inline {
-  --color-background: var(--klaud-bg);
-  --color-foreground: var(--klaud-text);
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 body {
-  background-color: var(--klaud-bg);
-  color: var(--klaud-text);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
   margin: 0;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -63,36 +89,47 @@ textarea:disabled {
 }
 
 .klaud-bg {
-  background-color: var(--klaud-bg);
+  background-color: var(--bg);
 }
 
 .klaud-surface {
-  background-color: var(--klaud-surface);
+  background-color: var(--surface);
 }
 
 .klaud-text {
-  color: var(--klaud-text);
+  color: var(--text);
 }
 
 .klaud-muted {
-  color: var(--klaud-muted);
+  color: var(--text2);
 }
 
 .klaud-border {
-  border-color: var(--klaud-border);
+  border-color: var(--border);
 }
 
 .klaud-border-b {
-  border-bottom-color: var(--klaud-border);
+  border-bottom-color: var(--border);
 }
 
 .klaud-border-t {
-  border-top-color: var(--klaud-border);
+  border-top-color: var(--border);
 }
 
 .ProseMirror:focus {
   outline: none;
   box-shadow: none;
+}
+
+.ProseMirror a,
+.prose .ProseMirror a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.ProseMirror a:hover,
+.prose .ProseMirror a:hover {
+  text-decoration: underline;
 }
 
 .ProseMirror ul,
@@ -111,12 +148,12 @@ textarea:disabled {
 
 .ProseMirror li {
   margin: 0.25rem 0;
-  color: var(--klaud-text);
+  color: var(--text);
   padding-left: 0.25rem;
 }
 
 .ProseMirror li::marker {
-  color: var(--klaud-accent);
+  color: var(--text2);
   font-weight: 600;
 }
 
@@ -132,7 +169,7 @@ textarea:disabled {
 .prose .ProseMirror h4,
 .prose .ProseMirror h5,
 .prose .ProseMirror h6 {
-  color: var(--klaud-text);
+  color: var(--text);
   font-weight: 800;
   line-height: 1.2;
   letter-spacing: -0.015em;
@@ -165,7 +202,6 @@ textarea:disabled {
   font-size: 1rem;
   font-weight: 400;
   line-height: 1.7;
-  letter-spacing: 0;
 }
 
 .ProseMirror p {
@@ -176,10 +212,10 @@ textarea:disabled {
 .prose .ProseMirror blockquote {
   margin: 1rem 0;
   padding: 0.85rem 1rem;
-  border-left: 4px solid var(--klaud-accent);
+  border-left: 3px solid var(--accent);
   border-radius: 0.6rem;
-  background: color-mix(in srgb, var(--klaud-accent) 10%, var(--klaud-surface));
-  color: color-mix(in srgb, var(--klaud-text) 90%, var(--klaud-muted));
+  background: var(--surface2);
+  color: var(--text2);
   font-style: italic;
 }
 
@@ -193,12 +229,11 @@ textarea:disabled {
 .prose .ProseMirror pre {
   margin: 1rem 0;
   padding: 0.9rem 1rem;
-  border: 1px solid var(--klaud-border);
+  border: 1px solid var(--border);
   border-radius: 0.7rem;
-  background: color-mix(in srgb, var(--klaud-surface) 80%, #0f172a 20%);
-  color: var(--klaud-text);
+  background: var(--surface2);
+  color: var(--text);
   overflow-x: auto;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
 
 .ProseMirror pre code,
@@ -216,7 +251,7 @@ textarea:disabled {
 .prose .ProseMirror code {
   font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.9em;
-  background: color-mix(in srgb, var(--klaud-border) 75%, transparent);
+  background: var(--surface2);
   border-radius: 0.35rem;
   padding: 0.12em 0.35em;
 }
@@ -225,18 +260,18 @@ textarea:disabled {
   display: inline-flex;
   align-items: center;
   border-radius: 9999px;
-  border: 1px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
   padding: 0.1rem 0.65rem;
   margin: 0 0.15rem;
   font-size: 0.8rem;
   line-height: 1.35;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.03em;
   white-space: nowrap;
   vertical-align: baseline;
-  backdrop-filter: blur(4px);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  transition: all 0.2s ease;
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease;
 }
 
 .ProseMirror [data-tag-chip] .tag-chip-text {
@@ -244,45 +279,27 @@ textarea:disabled {
   margin-left: 0.1rem;
 }
 
-.ProseMirror [data-tag-chip]:hover {
-  filter: brightness(1.05);
-  transform: translateY(-0.5px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
-}
-
 .ProseMirror [data-tag-chip]:focus-within {
-  outline: 2px solid color-mix(in srgb, var(--klaud-accent) 60%, transparent);
+  outline: 2px solid var(--focusRing);
   outline-offset: 1px;
 }
 
-.ProseMirror [data-tag-chip][data-color='blue'] {
-  background: color-mix(in srgb, var(--klaud-accent) 18%, var(--klaud-glass));
-  border-color: color-mix(in srgb, var(--klaud-accent) 40%, var(--klaud-border));
-  color: color-mix(in srgb, var(--klaud-accent) 40%, var(--klaud-text));
-}
-
-.ProseMirror [data-tag-chip][data-color='green'] {
-  background: color-mix(in srgb, #10b981 18%, var(--klaud-glass));
-  border-color: color-mix(in srgb, #10b981 40%, var(--klaud-border));
-  color: #059669;
+.ProseMirror [data-tag-chip][data-color='red'] {
+  background: rgba(220, 38, 38, 0.12);
+  border-color: rgba(220, 38, 38, 0.3);
+  color: var(--tagRed);
 }
 
 .ProseMirror [data-tag-chip][data-color='yellow'] {
-  background: color-mix(in srgb, #f59e0b 20%, var(--klaud-glass));
-  border-color: color-mix(in srgb, #f59e0b 40%, var(--klaud-border));
-  color: #d97706;
+  background: rgba(202, 138, 4, 0.12);
+  border-color: rgba(202, 138, 4, 0.3);
+  color: var(--tagYellow);
 }
 
-.ProseMirror [data-tag-chip][data-color='red'] {
-  background: color-mix(in srgb, #ef4444 18%, var(--klaud-glass));
-  border-color: color-mix(in srgb, #ef4444 40%, var(--klaud-border));
-  color: #dc2626;
-}
-
-.ProseMirror [data-tag-chip][data-color='purple'] {
-  background: color-mix(in srgb, #8b5cf6 18%, var(--klaud-glass));
-  border-color: color-mix(in srgb, #8b5cf6 40%, var(--klaud-border));
-  color: #7c3aed;
+.ProseMirror [data-tag-chip][data-color='green'] {
+  background: rgba(22, 163, 74, 0.12);
+  border-color: rgba(22, 163, 74, 0.3);
+  color: var(--tagGreen);
 }
 
 .ProseMirror .date-chip {
@@ -290,25 +307,25 @@ textarea:disabled {
   align-items: center;
   gap: 0.35rem;
   border-radius: 9999px;
-  border: 1px solid var(--klaud-border);
+  border: 1px solid var(--border);
   padding: 0.1rem 0.65rem;
   margin: 0 0.12rem;
   font-size: 0.85rem;
   font-weight: 600;
-  background: color-mix(in srgb, var(--klaud-accent) 12%, var(--klaud-surface));
-  color: var(--klaud-text);
+  background: var(--surface2);
+  color: var(--text);
   white-space: nowrap;
   vertical-align: baseline;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .ProseMirror .date-chip::before {
-  content: '📅';
-  font-size: 0.9em;
+  content: '\25cf';
+  font-size: 0.45rem;
+  color: var(--accent);
 }
 
 .ProseMirror .date-chip.ProseMirror-selectednode {
-  outline: 2px solid var(--klaud-accent);
+  outline: 2px solid var(--focusRing);
   outline-offset: 1px;
 }
 
@@ -330,7 +347,7 @@ textarea:disabled {
   content: '';
 }
 
-.ProseMirror ul[data-type='taskList'] li>label {
+.ProseMirror ul[data-type='taskList'] li > label {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -338,20 +355,20 @@ textarea:disabled {
   user-select: none;
 }
 
-.ProseMirror ul[data-type='taskList'] li>label input[type='checkbox'] {
+.ProseMirror ul[data-type='taskList'] li > label input[type='checkbox'] {
   appearance: none;
   width: 1.05rem;
   height: 1.05rem;
-  border: 2px solid color-mix(in srgb, var(--klaud-accent) 65%, var(--klaud-border));
+  border: 1px solid var(--border);
   border-radius: 0.3rem;
-  background-color: var(--klaud-surface);
+  background-color: var(--surface);
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+  transition: background-color 180ms ease, border-color 180ms ease;
 }
 
-.ProseMirror ul[data-type='taskList'] li>label input[type='checkbox']::before {
+.ProseMirror ul[data-type='taskList'] li > label input[type='checkbox']::before {
   content: '';
   width: 0.55rem;
   height: 0.55rem;
@@ -362,34 +379,30 @@ textarea:disabled {
   background: #ffffff;
 }
 
-.ProseMirror ul[data-type='taskList'] li>label input[type='checkbox']:checked {
-  background-color: var(--klaud-accent);
-  border-color: var(--klaud-accent);
+.ProseMirror ul[data-type='taskList'] li > label input[type='checkbox']:checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
 }
 
-.ProseMirror ul[data-type='taskList'] li>label input[type='checkbox']:checked::before {
+.ProseMirror ul[data-type='taskList'] li > label input[type='checkbox']:checked::before {
   transform: scale(1);
 }
 
-.ProseMirror ul[data-type='taskList'] li>label input[type='checkbox']:hover {
-  transform: translateY(-1px);
-}
-
-.ProseMirror ul[data-type='taskList'] li>label input[type='checkbox']:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--klaud-accent) 55%, transparent);
+.ProseMirror ul[data-type='taskList'] li > label input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--focusRing);
   outline-offset: 2px;
 }
 
-.ProseMirror ul[data-type='taskList'] li>div {
+.ProseMirror ul[data-type='taskList'] li > div {
   flex: 1;
   min-width: 0;
 }
 
-.ProseMirror ul[data-type='taskList'] li>div p {
+.ProseMirror ul[data-type='taskList'] li > div p {
   margin: 0;
 }
 
-.ProseMirror ul[data-type='taskList'] li[data-checked='true']>div p {
-  color: var(--klaud-muted);
+.ProseMirror ul[data-type='taskList'] li[data-checked='true'] > div p {
+  color: var(--text2);
   text-decoration: line-through;
 }

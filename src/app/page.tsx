@@ -2,9 +2,10 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { auth, db } from '@/lib/firebase';
+import { auth } from '@/lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+import { ensureUserAppRegistration } from '@/lib/userRegistration';
+import { ensureUserHasNote } from '@/lib/notesLifecycle';
 
 export default function Home() {
   const router = useRouter();
@@ -16,24 +17,34 @@ export default function Home() {
         return;
       }
 
-      const q = query(
-        collection(db, 'notes'),
-        where('owner', '==', user.uid),
-        orderBy('updated_at', 'desc'),
-        limit(1)
-      );
+      try {
+        await ensureUserAppRegistration(user);
+      } catch (error) {
+        console.error('Failed to ensure user app registration:', error);
+      }
 
-      const snapshot = await getDocs(q);
+      try {
+        const preferredNoteId = (() => {
+          try {
+            return window.localStorage.getItem(`tulis:lastNoteId:${user.uid}`) ?? undefined;
+          } catch {
+            return undefined;
+          }
+        })();
 
-      if (!snapshot.empty) {
-        router.replace(`/notes/${snapshot.docs[0].id}`);
-      } else {
-        router.replace('/notes');
+        const { noteId, created } = await ensureUserHasNote(user.uid, { preferredNoteId });
+        router.replace(created ? `/notes/${noteId}?focus=title` : `/notes/${noteId}`);
+      } catch (error) {
+        console.error('Failed to ensure user has at least one note:', error);
       }
     });
 
     return () => unsubscribe();
   }, [router]);
 
-  return null;
+  return (
+    <div className="flex min-h-screen items-center justify-center klaud-bg">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] klaud-muted">Opening notes...</p>
+    </div>
+  );
 }

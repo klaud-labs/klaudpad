@@ -25,7 +25,7 @@ export type PwaInstallContextValue = {
 
 export const PwaInstallContext = createContext<PwaInstallContextValue | undefined>(undefined);
 
-const DISMISS_STORAGE_KEY = 'klaudpad:pwa-banner-dismissed-until';
+const DISMISS_STORAGE_KEY = 'tulis:pwa-banner-dismissed-until';
 const DISMISS_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
 function isStandaloneMode() {

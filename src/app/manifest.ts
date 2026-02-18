@@ -2,14 +2,14 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'KlaudPad',
-    short_name: 'KlaudPad',
-    description: 'KlaudPad - Note-taking, powered by Klaud.',
+    name: 'Tulis',
+    short_name: 'Tulis',
+    description: 'Tulis - Notes that stay organized.',
     start_url: '/notes',
     scope: '/',
     display: 'standalone',
-    background_color: '#09090b',
-    theme_color: '#0ea5e9',
+    background_color: '#0B0F14',
+    theme_color: '#4F46E5',
     icons: [
       {
         src: '/icons/icon-192.png',

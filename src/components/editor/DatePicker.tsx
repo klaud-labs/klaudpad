@@ -31,9 +31,9 @@ export const DatePicker = ({ onSelect, onClose }: DatePickerProps) => {
     const monthName = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(viewDate);
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/20 backdrop-blur-[2px]" onClick={onClose}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
             <div
-                className="w-full max-w-[320px] rounded-3xl border klaud-border bg-[color:var(--klaud-surface)] shadow-2xl animate-in fade-in zoom-in duration-200"
+                className="w-full max-w-[320px] rounded-[var(--rLg)] border klaud-border bg-[color:var(--surface)]"
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="p-6">
@@ -85,7 +85,7 @@ export const DatePicker = ({ onSelect, onClose }: DatePickerProps) => {
                                     className={`
                                         aspect-square flex items-center justify-center text-sm font-bold rounded-xl transition-all
                                         ${isSelected
-                                            ? 'bg-[color:var(--klaud-accent)] text-white shadow-lg shadow-cyan-500/20 scale-105'
+                                            ? 'bg-[color:var(--klaud-accent)] text-white'
                                             : isToday
                                                 ? 'bg-[color:var(--klaud-accent)]/10 text-[color:var(--klaud-accent)]'
                                                 : 'klaud-text hover:bg-black/5 dark:hover:bg-white/5'

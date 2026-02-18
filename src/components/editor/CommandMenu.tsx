@@ -2,13 +2,14 @@
 
 import { forwardRef, useImperativeHandle, useState } from 'react';
 import { Editor } from '@tiptap/react';
+import { IconType } from 'react-icons';
 
 import { Range } from '@tiptap/core';
 
 export type CommandItem = {
     title: string;
     description: string;
-    icon: string;
+    icon: IconType;
     aliases?: string[];
     command: (props: { editor: Editor; range: Range }) => void;
 };
@@ -60,26 +61,34 @@ export const CommandMenu = forwardRef<CommandMenuRef, CommandMenuProps>(
         }));
 
         return (
-            <div className="klaud-surface border klaud-border rounded-lg shadow-xl overflow-hidden min-w-[280px] max-h-[400px] overflow-y-auto">
+            <div className="klaud-surface border klaud-border rounded-[var(--rMd)] overflow-hidden min-w-[280px] max-h-[400px] overflow-y-auto">
                 {items.length > 0 ? (
                     <div className="p-1">
-                        {items.map((item, index) => (
+                        {items.map((item, index) => {
+                            const Icon = item.icon;
+                            return (
                             <button
                                 key={index}
                                 type="button"
-                                className={`w-full flex items-start gap-3 px-3 py-2 rounded-md text-left transition-colors ${index === activeIndex
-                                    ? 'bg-[color:var(--klaud-accent)]/[0.15] text-[color:var(--klaud-accent)]'
-                                    : 'klaud-text hover:bg-[color:var(--klaud-border)]'
+                                className={`w-full flex items-start gap-3 px-3 py-2 rounded-[var(--rSm)] text-left transition-colors ${index === activeIndex
+                                    ? 'bg-[color:var(--surface2)] klaud-text'
+                                    : 'klaud-text hover:bg-[color:var(--surface2)]'
                                     }`}
                                 onClick={() => selectItem(index)}
                             >
-                                <span className="text-xl flex-shrink-0 mt-0.5">{item.icon}</span>
+                                <span className={`mt-0.5 inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[8px] border ${index === activeIndex
+                                    ? 'border-[color:var(--accent)]/40 bg-[color:var(--surface)] text-[color:var(--accent)]'
+                                    : 'border-[color:var(--border2)] bg-[color:var(--surface2)] text-[color:var(--text2)]'
+                                    }`}>
+                                    <Icon className="h-3.5 w-3.5" />
+                                </span>
                                 <div className="flex-1 min-w-0">
                                     <div className="font-medium text-sm">{item.title}</div>
                                     <div className="text-xs klaud-muted truncate">{item.description}</div>
                                 </div>
                             </button>
-                        ))}
+                            );
+                        })}
                     </div>
                 ) : (
                     <div className="px-3 py-2 text-sm klaud-muted">No results</div>

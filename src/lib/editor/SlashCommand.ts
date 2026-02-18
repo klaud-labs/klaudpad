@@ -4,6 +4,21 @@ import { getSuggestionConfig } from '@/lib/editor/suggestion';
 import { CommandItem } from '@/components/editor/CommandMenu';
 import { TagChipColor } from '@/editor/TagChip';
 import { emitOpenDatePicker } from '@/lib/editor/datePickerEvent';
+import {
+    LuCalendarDays,
+    LuCode,
+    LuHeading1,
+    LuHeading2,
+    LuHeading3,
+    LuList,
+    LuListOrdered,
+    LuListTodo,
+    LuMinus,
+    LuPilcrow,
+    LuQuote,
+    LuSun,
+    LuTag,
+} from 'react-icons/lu';
 
 const insertOrRecolorTag = (editor: Editor, color: TagChipColor) => {
     if (editor.isActive('tagChip')) {
@@ -33,7 +48,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Text',
                 description: 'Just start typing with plain text',
-                icon: '📝',
+                icon: LuPilcrow,
                 aliases: ['p', 'paragraph'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).clearNodes().setParagraph().run();
@@ -42,7 +57,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Heading 1',
                 description: 'Big section heading',
-                icon: 'H1',
+                icon: LuHeading1,
                 aliases: ['h1', 'big', 'large'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).clearNodes().setHeading({ level: 1 }).run();
@@ -51,7 +66,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Heading 2',
                 description: 'Medium section heading',
-                icon: 'H2',
+                icon: LuHeading2,
                 aliases: ['h2', 'medium'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).clearNodes().setHeading({ level: 2 }).run();
@@ -60,7 +75,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Heading 3',
                 description: 'Small section heading',
-                icon: 'H3',
+                icon: LuHeading3,
                 aliases: ['h3', 'small'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).clearNodes().setHeading({ level: 3 }).run();
@@ -69,7 +84,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Bullet List',
                 description: 'Create a simple bullet list',
-                icon: '•',
+                icon: LuList,
                 aliases: ['ul', 'bullets', 'list'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).clearNodes().toggleBulletList().run();
@@ -78,7 +93,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Numbered List',
                 description: 'Create a numbered list',
-                icon: '1.',
+                icon: LuListOrdered,
                 aliases: ['ol', 'numbers', '1', 'list'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).clearNodes().toggleOrderedList().run();
@@ -87,7 +102,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Task List',
                 description: 'Track tasks with a checklist',
-                icon: '☑',
+                icon: LuListTodo,
                 aliases: ['todo', 'check', 'task'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).clearNodes().toggleTaskList().run();
@@ -96,27 +111,27 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Tag',
                 description: 'Insert an inline editable tag chip',
-                icon: '🏷',
+                icon: LuTag,
                 aliases: ['tag', 'chip', 'label'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).run();
-                    insertOrRecolorTag(editor, 'blue');
+                    insertOrRecolorTag(editor, 'accent');
                 },
             },
             {
-                title: 'Tag Blue',
-                description: 'Insert or recolor tag to blue',
-                icon: '🔵',
-                aliases: ['tag-blue', 'blue-tag', 'tagblue'],
+                title: 'Tag Indigo',
+                description: 'Insert or recolor tag to indigo',
+                icon: LuTag,
+                aliases: ['tag-indigo', 'indigo-tag', 'tagindigo'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).run();
-                    insertOrRecolorTag(editor, 'blue');
+                    insertOrRecolorTag(editor, 'accent');
                 },
             },
             {
                 title: 'Tag Green',
                 description: 'Insert or recolor tag to green',
-                icon: '🟢',
+                icon: LuTag,
                 aliases: ['tag-green', 'green-tag', 'taggreen'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).run();
@@ -126,7 +141,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Tag Yellow',
                 description: 'Insert or recolor tag to yellow',
-                icon: '🟡',
+                icon: LuTag,
                 aliases: ['tag-yellow', 'yellow-tag', 'tagyellow'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).run();
@@ -136,7 +151,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Tag Red',
                 description: 'Insert or recolor tag to red',
-                icon: '🔴',
+                icon: LuTag,
                 aliases: ['tag-red', 'red-tag', 'tagred'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).run();
@@ -144,19 +159,9 @@ export const SlashCommand = Extension.create({
                 },
             },
             {
-                title: 'Tag Purple',
-                description: 'Insert or recolor tag to purple',
-                icon: '🟣',
-                aliases: ['tag-purple', 'purple-tag', 'tagpurple'],
-                command: ({ editor, range }: { editor: Editor; range: Range }) => {
-                    editor.chain().focus().deleteRange(range).run();
-                    insertOrRecolorTag(editor, 'purple');
-                },
-            },
-            {
                 title: 'Quote',
                 description: 'Capture a quote',
-                icon: '"',
+                icon: LuQuote,
                 aliases: ['blockquote', 'quote'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).toggleBlockquote().run();
@@ -165,7 +170,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Code Block',
                 description: 'Display code with syntax highlighting',
-                icon: '</>',
+                icon: LuCode,
                 aliases: ['code', 'pre', 'snippet'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).toggleCodeBlock().run();
@@ -174,7 +179,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Divider',
                 description: 'Visually divide blocks',
-                icon: '—',
+                icon: LuMinus,
                 aliases: ['hr', 'line', 'divider', 'separator'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).setHorizontalRule().run();
@@ -183,7 +188,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Date',
                 description: 'Pick a date to insert',
-                icon: '📅',
+                icon: LuCalendarDays,
                 aliases: ['date', 'calendar'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).run();
@@ -193,7 +198,7 @@ export const SlashCommand = Extension.create({
             {
                 title: 'Today',
                 description: 'Insert today\'s date instantly',
-                icon: '☀️',
+                icon: LuSun,
                 aliases: ['today', 'now'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).setDateChip({ date: new Date().toISOString() }).run();

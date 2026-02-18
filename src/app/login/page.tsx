@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { auth } from '@/lib/firebase';
 import {
+  User,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
@@ -13,6 +14,8 @@ import {
   getRedirectResult,
   updateProfile,
 } from 'firebase/auth';
+import { ensureUserAppRegistration } from '@/lib/userRegistration';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 function getFriendlyAuthError(error: unknown, fallback: string) {
   const code = typeof error === 'object' && error && 'code' in error
@@ -45,6 +48,7 @@ export default function Login() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -54,25 +58,51 @@ export default function Login() {
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetLoading, setResetLoading] = useState(false);
 
+  const trimmedName = name.trim();
+  const trimmedEmail = email.trim();
+  const hasEmailShape = /\S+@\S+\.\S+/.test(trimmedEmail);
+  const passwordTooShort = isSignUp && password.length > 0 && password.length < 6;
+  const confirmMismatch = isSignUp && confirmPassword.length > 0 && confirmPassword !== password;
+  const canSubmit = loading
+    ? false
+    : isSignUp
+      ? Boolean(trimmedName) && hasEmailShape && password.length >= 6 && confirmPassword === password
+      : hasEmailShape && password.length > 0;
+
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
     setLoading(true);
 
     try {
+      let signedInUser: User;
+
       if (isSignUp) {
-        const trimmedName = name.trim();
         if (!trimmedName) {
           setError('Please enter your name.');
           setLoading(false);
           return;
         }
+        if (password.length < 6) {
+          setError('Password should be at least 6 characters.');
+          setLoading(false);
+          return;
+        }
+        if (confirmPassword !== password) {
+          setError('Passwords do not match.');
+          setLoading(false);
+          return;
+        }
 
-        const credential = await createUserWithEmailAndPassword(auth, email, password);
+        const credential = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
         await updateProfile(credential.user, { displayName: trimmedName });
+        signedInUser = credential.user;
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        const credential = await signInWithEmailAndPassword(auth, trimmedEmail, password);
+        signedInUser = credential.user;
       }
+
+      await ensureUserAppRegistration(signedInUser);
       router.replace('/notes');
     } catch (err: unknown) {
       setError(getFriendlyAuthError(err, `Could not ${isSignUp ? 'create your account' : 'sign you in'}.`));
@@ -90,7 +120,8 @@ export default function Login() {
       provider.setCustomParameters({ prompt: 'select_account' });
 
       // Popup is more reliable for preserving auth state in this app flow.
-      await signInWithPopup(auth, provider);
+      const credential = await signInWithPopup(auth, provider);
+      await ensureUserAppRegistration(credential.user);
       router.replace('/notes');
     } catch (err: unknown) {
       const code = typeof err === 'object' && err && 'code' in err
@@ -136,7 +167,9 @@ export default function Login() {
     getRedirectResult(auth)
       .then((result) => {
         if (result?.user) {
-          router.replace('/notes');
+          ensureUserAppRegistration(result.user).finally(() => {
+            router.replace('/notes');
+          });
         }
       })
       .catch((err) => {
@@ -148,7 +181,9 @@ export default function Login() {
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        router.replace('/notes');
+        ensureUserAppRegistration(user).finally(() => {
+          router.replace('/notes');
+        });
       }
     });
 
@@ -156,142 +191,35 @@ export default function Login() {
   }, [router]);
 
   return (
-    <div className="klaud-bg relative flex min-h-screen items-start justify-center overflow-y-auto px-4 py-8 sm:py-10">
-      {/* Decorative Background Elements */}
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-[color:var(--klaud-accent)]/10 blur-[120px]" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-[color:var(--klaud-secondary)]/10 blur-[120px]" />
+    <div className="klaud-bg relative flex min-h-screen items-start justify-center overflow-y-auto px-4 pt-4 sm:pt-8 lg:pt-12 pb-8">
+      <div className="absolute right-4 top-4 z-20">
+        <ThemeToggle />
+      </div>
 
       <div className="relative z-10 w-full max-w-md">
-        {/* Brand Header */}
-        <div className="flex flex-col items-center mb-10 gap-3 text-center">
-          <svg className="h-14 w-14" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-            <defs>
-              <linearGradient id="klaudCloudGradient" x1="10" y1="16" x2="54" y2="48" gradientUnits="userSpaceOnUse">
-                <stop stopColor="var(--klaud-accent)" />
-                <stop offset="1" stopColor="var(--klaud-secondary)" />
-              </linearGradient>
-            </defs>
-            <path
-              d="M19 43h26c8 0 13.8-5.6 13.8-12.6 0-6.6-5-12-11.3-12.7a15.8 15.8 0 0 0-30.2 5.2C11.8 24.1 7.5 28.6 7.5 34.2 7.5 39 10.7 43 15.1 43h3.9Z"
-              fill="url(#klaudCloudGradient)"
-            />
-          </svg>
-          <h1 className="text-3xl font-black tracking-tight klaud-text">KlaudPad</h1>
-          <p className="text-sm klaud-muted opacity-75">Your notes, in the klaud.</p>
+        <div className="mb-7 flex flex-col items-center gap-1 text-center">
+          <h1 className="text-4xl font-black tracking-tight lowercase klaud-text">tulis</h1>
+          <p
+            className="text-[11px] uppercase tracking-[0.22em] klaud-muted opacity-70"
+            style={{ fontFamily: 'var(--font-geist-mono)' }}
+          >
+            by yun
+          </p>
         </div>
 
-        <div className="klaud-surface bg-[color:var(--klaud-glass)] backdrop-blur-2xl w-full space-y-8 rounded-[32px] border klaud-border p-10 shadow-2xl">
-          <div className="space-y-2">
-            <h2 className="text-2xl font-bold tracking-tight klaud-text">{isSignUp ? 'Create your account' : 'Welcome back'}</h2>
+        <div className="klaud-surface w-full space-y-5 rounded-[var(--rLg)] border klaud-border p-6 sm:p-7">
+          <div className="space-y-1">
+            <h2 className="text-2xl font-bold tracking-tight klaud-text">{isSignUp ? 'Create account' : 'Sign in'}</h2>
             <p className="text-sm klaud-muted opacity-70">
-              {isSignUp ? 'Start writing in seconds.' : 'Sign in to pick up where you left off.'}
+              {isSignUp ? 'Start writing in seconds.' : 'Continue to your notes.'}
             </p>
-          </div>
-
-          <form className="space-y-5" onSubmit={handleLogin}>
-            {isSignUp && (
-              <div className="space-y-1.5">
-                <label className="block text-xs font-bold uppercase tracking-widest klaud-muted px-1" htmlFor="name">
-                  Name
-                </label>
-                <input
-                  id="name"
-                  type="text"
-                  required={isSignUp}
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full rounded-2xl border-none bg-white/50 dark:bg-black/20 px-4 py-3.5 text-sm klaud-text shadow-inner ring-1 ring-[color:var(--klaud-border)] focus:ring-2 focus:ring-[color:var(--klaud-accent)] transition-all outline-none"
-                  placeholder="Your name"
-                />
-              </div>
-            )}
-
-            <div className="space-y-1.5">
-              <label className="block text-xs font-bold uppercase tracking-widest klaud-muted px-1" htmlFor="email">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-2xl border-none bg-white/50 dark:bg-black/20 px-4 py-3.5 text-sm klaud-text shadow-inner ring-1 ring-[color:var(--klaud-border)] focus:ring-2 focus:ring-[color:var(--klaud-accent)] transition-all outline-none"
-                placeholder="you@example.com"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between px-1">
-                <label className="block text-xs font-bold uppercase tracking-widest klaud-muted" htmlFor="password">
-                  Password
-                </label>
-                {!isSignUp && (
-                  <button
-                    type="button"
-                    className="text-[10px] font-bold uppercase tracking-tighter text-[color:var(--klaud-accent)] hover:opacity-70 transition-opacity"
-                    onClick={() => {
-                      setResetEmail(email);
-                      setResetOpen(true);
-                      setResetSent(false);
-                      setResetError(null);
-                    }}
-                  >
-                    Forgot password?
-                  </button>
-                )}
-              </div>
-              <input
-                id="password"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-2xl border-none bg-white/50 dark:bg-black/20 px-4 py-3.5 text-sm klaud-text shadow-inner ring-1 ring-[color:var(--klaud-border)] focus:ring-2 focus:ring-[color:var(--klaud-accent)] transition-all outline-none"
-                placeholder="••••••••"
-              />
-            </div>
-
-            {error ? (
-              <div className="p-3 rounded-xl bg-red-400/10 border border-red-400/20 text-red-400 text-xs font-medium animate-in slide-in-from-top-1">
-                {error}
-              </div>
-            ) : null}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full relative py-4 rounded-2xl bg-gradient-to-r from-[color:var(--klaud-accent)] to-[color:var(--klaud-secondary)] text-white font-bold text-sm shadow-xl shadow-cyan-500/20 transition-all hover:scale-[1.01] active:scale-[0.98] disabled:opacity-50"
-            >
-              {loading ? (isSignUp ? 'Creating account...' : 'Signing in...') : (isSignUp ? 'Create account' : 'Sign in')}
-            </button>
-
-            <div className="text-center">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSignUp(!isSignUp);
-                  setError(null);
-                }}
-                className="text-xs font-bold klaud-muted hover:text-[color:var(--klaud-accent)] transition-colors"
-              >
-                {isSignUp ? 'Already have an account? Sign in' : 'New to KlaudPad? Create an account'}
-              </button>
-            </div>
-          </form>
-
-          <div className="relative">
-            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[1px] bg-[color:var(--klaud-border)]" />
-            <div className="relative flex justify-center">
-              <span className="bg-transparent px-4 text-[10px] font-bold uppercase tracking-widest klaud-muted">Or continue with</span>
-            </div>
           </div>
 
           <button
             type="button"
             onClick={handleGoogleLogin}
             disabled={loading}
-            className="w-full flex items-center justify-center gap-3 py-3.5 rounded-2xl border klaud-border bg-[color:var(--klaud-bg)] klaud-text font-bold text-sm transition-all hover:bg-[color:var(--klaud-border)] active:scale-[0.98]"
+            className="flex w-full items-center justify-center gap-3 rounded-[var(--rMd)] border klaud-border bg-[color:var(--surface)] py-3 text-sm font-semibold klaud-text transition-colors hover:bg-[color:var(--surface2)] disabled:opacity-50"
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -301,30 +229,152 @@ export default function Login() {
             </svg>
             Continue with Google
           </button>
+
+          <p className="px-1 text-[11px] font-medium uppercase tracking-[0.12em] klaud-muted">Or use email</p>
+
+          <form className="space-y-4" onSubmit={handleLogin}>
+            {isSignUp && (
+              <div className="space-y-1.5">
+                <label className="block px-1 text-xs font-semibold uppercase tracking-[0.12em] klaud-muted" htmlFor="name">
+                  Name
+                </label>
+                <input
+                  id="name"
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-3 text-sm klaud-text placeholder:text-[color:var(--text3)] transition-colors focus:border-[color:var(--accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--focusRing)]"
+                  placeholder="Your name"
+                />
+                {name.length > 0 && !trimmedName && (
+                  <p className="px-1 text-xs klaud-muted">Name is required.</p>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <label className="block px-1 text-xs font-semibold uppercase tracking-[0.12em] klaud-muted" htmlFor="email">
+                Email
+              </label>
+              <input
+                id="email"
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-3 text-sm klaud-text placeholder:text-[color:var(--text3)] transition-colors focus:border-[color:var(--accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--focusRing)]"
+                placeholder="you@example.com"
+              />
+              {email.length > 0 && !hasEmailShape && (
+                <p className="px-1 text-xs klaud-muted">Enter a valid email address.</p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block px-1 text-xs font-semibold uppercase tracking-[0.12em] klaud-muted" htmlFor="password">
+                Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-3 text-sm klaud-text placeholder:text-[color:var(--text3)] transition-colors focus:border-[color:var(--accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--focusRing)]"
+                placeholder="••••••••"
+              />
+              {passwordTooShort && (
+                <p className="px-1 text-xs klaud-muted">Use at least 6 characters.</p>
+              )}
+              {!isSignUp && (
+                <button
+                  type="button"
+                  className="pl-1 text-xs font-medium klaud-muted transition-colors hover:text-[color:var(--accent)]"
+                  onClick={() => {
+                    setResetEmail(trimmedEmail);
+                    setResetOpen(true);
+                    setResetSent(false);
+                    setResetError(null);
+                  }}
+                >
+                  Forgot password?
+                </button>
+              )}
+            </div>
+
+            {isSignUp && (
+              <div className="space-y-1.5">
+                <label className="block px-1 text-xs font-semibold uppercase tracking-[0.12em] klaud-muted" htmlFor="confirm-password">
+                  Confirm password
+                </label>
+                <input
+                  id="confirm-password"
+                  type="password"
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-3 text-sm klaud-text placeholder:text-[color:var(--text3)] transition-colors focus:border-[color:var(--accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--focusRing)]"
+                  placeholder="••••••••"
+                />
+                {confirmMismatch && (
+                  <p className="px-1 text-xs klaud-muted">Passwords do not match.</p>
+                )}
+              </div>
+            )}
+
+            {error ? (
+              <div className="rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface2)] p-3 text-xs font-medium klaud-text">
+                {error}
+              </div>
+            ) : null}
+
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              className="w-full rounded-[var(--rMd)] bg-[color:var(--accent)] py-3 text-sm font-semibold text-white transition-colors hover:bg-[color:var(--accentHover)] disabled:opacity-50"
+            >
+              {loading ? (isSignUp ? 'Creating account...' : 'Signing in...') : (isSignUp ? 'Create account' : 'Sign in')}
+            </button>
+
+            <div className="pt-1 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSignUp((prev) => !prev);
+                  setConfirmPassword('');
+                  setError(null);
+                }}
+                className="text-xs font-medium klaud-muted transition-colors hover:text-[color:var(--text)]"
+              >
+                {isSignUp ? 'Already have an account? Sign in' : 'New to tulis? Create an account'}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
 
       {/* Password Reset Modal */}
       {resetOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xl px-4 animate-in fade-in duration-300">
-          <div className="klaud-surface w-full max-w-sm rounded-[32px] border klaud-border p-10 shadow-2xl scale-in-center">
-            <h2 className="text-xl font-bold klaud-text mb-2">Reset your password</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 backdrop-blur-sm">
+          <div className="klaud-surface w-full max-w-sm rounded-[var(--rLg)] border klaud-border p-6 sm:p-7">
+            <h2 className="text-xl font-semibold tracking-tight klaud-text">Reset password</h2>
             {resetSent ? (
-              <div className="space-y-6">
-                <p className="text-sm klaud-muted leading-relaxed">
-                  If an account exists for <span className="font-bold text-[color:var(--klaud-accent)]">{resetEmail}</span>, you&apos;ll receive a reset email shortly.
+              <div className="mt-2 space-y-5">
+                <p className="text-sm leading-relaxed klaud-muted">
+                  If an account exists for <span className="font-semibold text-[color:var(--text)]">{resetEmail}</span>, you&apos;ll receive a reset email shortly.
                 </p>
                 <button
                   onClick={() => { setResetOpen(false); setResetSent(false); }}
-                  className="w-full py-3 rounded-2xl bg-[color:var(--klaud-accent)] text-white font-bold text-sm shadow-lg shadow-cyan-500/20"
+                  className="w-full rounded-[var(--rMd)] bg-[color:var(--accent)] py-3 text-sm font-semibold text-white transition-colors hover:bg-[color:var(--accentHover)]"
                 >
                   Back to sign in
                 </button>
               </div>
             ) : (
-              <form className="space-y-6" onSubmit={handlePasswordReset}>
+              <form className="mt-4 space-y-4" onSubmit={handlePasswordReset}>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-bold uppercase tracking-widest klaud-muted px-1" htmlFor="reset-email">
+                  <label className="block px-1 text-xs font-semibold uppercase tracking-[0.12em] klaud-muted" htmlFor="reset-email">
                     Email address
                   </label>
                   <input
@@ -333,23 +383,27 @@ export default function Login() {
                     required
                     value={resetEmail}
                     onChange={(e) => setResetEmail(e.target.value)}
-                    className="w-full rounded-2xl border-none bg-white/50 dark:bg-black/20 px-4 py-3.5 text-sm klaud-text shadow-inner ring-1 ring-[color:var(--klaud-border)] focus:ring-2 focus:ring-[color:var(--klaud-accent)] outline-none"
+                    className="w-full rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-3 text-sm klaud-text placeholder:text-[color:var(--text3)] focus:border-[color:var(--accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--focusRing)]"
                     placeholder="you@example.com"
                   />
                 </div>
-                {resetError && <p className="text-xs text-red-400 font-medium">{resetError}</p>}
+                {resetError && (
+                  <div className="rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface2)] p-3 text-xs font-medium klaud-text">
+                    {resetError}
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={() => setResetOpen(false)}
-                    className="flex-1 py-3 rounded-2xl klaud-text font-bold text-sm hover:bg-black/5"
+                    className="flex-1 rounded-[var(--rMd)] border border-[color:var(--border)] bg-transparent py-3 text-sm font-semibold klaud-text transition-colors hover:bg-[color:var(--surface2)]"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={resetLoading}
-                    className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-[color:var(--klaud-accent)] to-[color:var(--klaud-secondary)] text-white font-bold text-sm shadow-xl shadow-cyan-500/20 disabled:opacity-50"
+                    className="flex-1 rounded-[var(--rMd)] bg-[color:var(--accent)] py-3 text-sm font-semibold text-white transition-colors hover:bg-[color:var(--accentHover)] disabled:opacity-50"
                   >
                     {resetLoading ? 'Sending...' : 'Send reset link'}
                   </button>

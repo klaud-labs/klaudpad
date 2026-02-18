@@ -1,6 +1,6 @@
-const SW_VERSION = 'v1';
-const STATIC_CACHE = `klaudpad-static-${SW_VERSION}`;
-const PAGE_CACHE = `klaudpad-pages-${SW_VERSION}`;
+const SW_VERSION = 'v4';
+const STATIC_CACHE = `tulis-static-${SW_VERSION}`;
+const PAGE_CACHE = `tulis-pages-${SW_VERSION}`;
 
 const PRECACHE_URLS = [
   '/manifest.webmanifest',

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { MobileInstallBanner } from "@/components/pwa/MobileInstallBanner";
 import { PwaProvider } from "@/components/pwa/PwaProvider";
@@ -15,16 +15,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "KlaudPad",
-  description: "KlaudPad - Note-taking, powered by Klaud.",
+  title: "Tulis",
+  description: "Tulis - Notes that stay organized.",
   manifest: "/manifest.webmanifest",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fcfcfd" },
-    { media: "(prefers-color-scheme: dark)", color: "#09090b" },
-  ],
   appleWebApp: {
     capable: true,
-    title: "KlaudPad",
+    title: "Tulis",
     statusBarStyle: "default",
   },
   icons: {
@@ -35,6 +31,13 @@ export const metadata: Metadata = {
     ],
     apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#F8FAFC" },
+    { media: "(prefers-color-scheme: dark)", color: "#0B0F14" },
+  ],
 };
 
 export default function RootLayout({
@@ -49,15 +52,17 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               try {
-                const theme = localStorage.getItem('theme') || 'dark';
+                const storedTheme = localStorage.getItem('theme');
+                const theme = storedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
                 document.documentElement.setAttribute('data-theme', theme);
+                document.documentElement.style.colorScheme = theme;
               } catch (e) {}
             `,
           }}
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased selection:bg-cyan-500/30 klaud-bg klaud-text`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased selection:bg-[color:var(--focusRing)] klaud-bg klaud-text`}
       >
         <PwaProvider>
           {children}

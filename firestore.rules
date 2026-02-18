@@ -2,20 +2,37 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /notes/{noteId} {
-      // Users can only create notes where they are the owner
-      allow create: if request.auth != null && request.resource.data.owner == request.auth.uid;
-      
-      // Users can only read, update, or delete their own notes
-      allow read, update, delete: if request.auth != null && resource.data.owner == request.auth.uid;
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    match /note_folders/{folderId} {
-      // Users can only create folders where they are the owner
-      allow create: if request.auth != null && request.resource.data.owner == request.auth.uid;
+    function isOwner(ownerId) {
+      return isSignedIn() && ownerId == request.auth.uid;
+    }
 
-      // Users can only read, update, or delete their own folders
-      allow read, update, delete: if request.auth != null && resource.data.owner == request.auth.uid;
+    function noteBelongsToUser(data) {
+      return ('ownerUid' in data) && isOwner(data.ownerUid);
+    }
+
+    function isRegisteredForTulis() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.apps.tulis == true;
+    }
+
+    match /users/{userId} {
+      allow read, create, update: if isOwner(userId);
+    }
+
+    match /tulis/data/notes/{noteId} {
+      allow create: if isRegisteredForTulis()
+        && ('ownerUid' in request.resource.data)
+        && isOwner(request.resource.data.ownerUid)
+        && (!('owner' in request.resource.data) || isOwner(request.resource.data.owner));
+      allow read, delete: if isRegisteredForTulis() && noteBelongsToUser(resource.data);
+      allow update: if isRegisteredForTulis()
+        && noteBelongsToUser(resource.data)
+        && noteBelongsToUser(request.resource.data);
     }
   }
 }

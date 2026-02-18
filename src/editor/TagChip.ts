@@ -1,11 +1,34 @@
 import { mergeAttributes, Node, InputRule } from '@tiptap/core';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
 
-export type TagChipColor = 'blue' | 'green' | 'yellow' | 'red' | 'purple';
+export type TagChipColor = 'accent' | 'green' | 'yellow' | 'red';
 
 type InsertTagChipOptions = {
   color?: TagChipColor;
   text?: string;
 };
+
+const TAG_COLOR_ALIASES: Record<string, TagChipColor> = {
+  red: 'red',
+  r: 'red',
+  urgent: 'red',
+  yellow: 'yellow',
+  y: 'yellow',
+  wait: 'yellow',
+  green: 'green',
+  g: 'green',
+  done: 'green',
+};
+
+function normalizeTagColor(input?: string | null): TagChipColor {
+  if (!input) return 'accent';
+  const normalized = input.trim().toLowerCase();
+  if (normalized === 'blue' || normalized === 'purple') return 'accent';
+  if (normalized === 'accent' || normalized === 'red' || normalized === 'yellow' || normalized === 'green') {
+    return normalized;
+  }
+  return TAG_COLOR_ALIASES[normalized] ?? 'accent';
+}
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -27,8 +50,8 @@ export const TagChip = Node.create({
   addAttributes() {
     return {
       color: {
-        default: 'blue',
-        parseHTML: (element) => element.getAttribute('data-color') || 'blue',
+        default: 'accent',
+        parseHTML: (element) => normalizeTagColor(element.getAttribute('data-color')),
         renderHTML: (attributes) => ({ 'data-color': attributes.color }),
       },
     };
@@ -59,7 +82,7 @@ export const TagChip = Node.create({
         (options = {}) =>
           ({ state, chain }) => {
             const text = options.text ?? 'tag';
-            const color = options.color ?? 'blue';
+            const color = options.color ?? 'accent';
             const { from, to } = state.selection;
             const beforePos = Math.max(from - 1, 0);
             const afterPos = Math.min(to + 1, state.doc.content.size);
@@ -158,13 +181,14 @@ export const TagChip = Node.create({
   addInputRules() {
     return [
       new InputRule({
-        find: /(?:^|\s)#(\w+)\s$/,
+        find: /(?:^|\s)#(\w+)\s$/i,
         handler: ({ state, range, match }) => {
           const { tr } = state;
           // match[0] is the full match (including potential leading space and trailing space)
           // match[1] is the tag text
           const fullMatch = match[0];
           const tagText = match[1];
+          const chipColor = normalizeTagColor(tagText);
 
           // If there's a leading space, we want to keep it
           const hasLeadingSpace = fullMatch.startsWith(' ');
@@ -172,7 +196,7 @@ export const TagChip = Node.create({
           // We replace up to range.to (which includes the trailing space)
           const end = range.to;
 
-          tr.replaceWith(start, end, this.type.create({ color: 'blue' }, state.schema.text(tagText)));
+          tr.replaceWith(start, end, this.type.create({ color: chipColor }, state.schema.text(tagText)));
           // Add a space after the chip for continued typing
           tr.insertText(' ', start + 1);
           return null;
@@ -182,6 +206,37 @@ export const TagChip = Node.create({
   },
 
   addProseMirrorPlugins() {
-    return [];
+    const tagType = this.type;
+
+    return [
+      new Plugin({
+        key: new PluginKey('tagChip-empty-cleanup'),
+        appendTransaction: (transactions, _oldState, newState) => {
+          if (!transactions.some((transaction) => transaction.docChanged)) {
+            return null;
+          }
+
+          const emptyRanges: Array<{ from: number; to: number }> = [];
+
+          newState.doc.descendants((node, pos) => {
+            if (node.type !== tagType) return;
+            if (node.textContent.trim().length > 0) return;
+            emptyRanges.push({ from: pos, to: pos + node.nodeSize });
+          });
+
+          if (emptyRanges.length === 0) {
+            return null;
+          }
+
+          const tr = newState.tr;
+          for (let index = emptyRanges.length - 1; index >= 0; index -= 1) {
+            const { from, to } = emptyRanges[index];
+            tr.delete(from, to);
+          }
+
+          return tr.docChanged ? tr : null;
+        },
+      }),
+    ];
   },
 });
