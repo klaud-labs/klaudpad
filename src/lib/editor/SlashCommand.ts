@@ -3,6 +3,7 @@ import Suggestion from '@tiptap/suggestion';
 import { getSuggestionConfig } from '@/lib/editor/suggestion';
 import { CommandItem } from '@/components/editor/CommandMenu';
 import { TagChipColor } from '@/editor/TagChip';
+import { emitOpenDatePicker } from '@/lib/editor/datePickerEvent';
 
 const insertOrRecolorTag = (editor: Editor, color: TagChipColor) => {
     if (editor.isActive('tagChip')) {
@@ -186,7 +187,7 @@ export const SlashCommand = Extension.create({
                 aliases: ['date', 'calendar'],
                 command: ({ editor, range }: { editor: Editor; range: Range }) => {
                     editor.chain().focus().deleteRange(range).run();
-                    (editor as any).emit('openDatePicker');
+                    emitOpenDatePicker(editor);
                 },
             },
             {

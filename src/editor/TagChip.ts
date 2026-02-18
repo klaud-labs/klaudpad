@@ -1,5 +1,4 @@
 import { mergeAttributes, Node, InputRule } from '@tiptap/core';
-import { Plugin } from '@tiptap/pm/state';
 
 export type TagChipColor = 'blue' | 'green' | 'yellow' | 'red' | 'purple';
 

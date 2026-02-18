@@ -20,6 +20,13 @@ import {
 import { signOut } from 'firebase/auth';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
+import { useNotesDragDrop } from '@/hooks/useNotesDragDrop';
+import {
+  matchesNoteQuery,
+  normalizeFolderId,
+  normalizeFolderName,
+  sortFoldersByCreatedAt,
+} from '@/lib/notes';
 
 type NoteListItem = { id: string; title: string | null; updated_at: Timestamp | null; folder_id: string | null };
 type FolderListItem = { id: string; name: string; created_at: Timestamp | null };
@@ -39,9 +46,6 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [showInstallHelp, setShowInstallHelp] = useState(false);
   const [installBusy, setInstallBusy] = useState(false);
-  const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
-  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
-  const [dragOverUnsorted, setDragOverUnsorted] = useState(false);
   const { canPromptInstall, isIosManualInstallAvailable, isInstalled, promptInstall } = usePwaInstall();
   const rawUserName = auth.currentUser?.displayName?.trim() || auth.currentUser?.email?.split('@')[0] || 'User';
   const userDisplayName = rawUserName.split(/\s+/).filter(Boolean)[0] || 'User';
@@ -52,12 +56,6 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
     .map((part) => part[0])
     .join('')
     .toUpperCase();
-
-  const normalizeFolderId = (value: unknown): string | null => {
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    return trimmed ? trimmed : null;
-  };
 
   useEffect(() => {
     if (!auth.currentUser) return;
@@ -90,7 +88,7 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
         const data = snapshotDoc.data();
         return {
           id: snapshotDoc.id,
-          name: (typeof data.name === 'string' && data.name.trim()) ? data.name.trim() : 'New Folder',
+          name: normalizeFolderName(data.name),
           created_at: data.created_at || null,
         };
       });
@@ -133,17 +131,8 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
   }, [onClose]);
 
   const filteredNotes = useMemo(() => {
-    return notes.filter((note) => {
-      if (!searchQuery.trim()) return true;
-      return (note.title || 'Untitled').toLowerCase().includes(searchQuery.trim().toLowerCase());
-    });
+    return notes.filter((note) => matchesNoteQuery(note.title, searchQuery));
   }, [notes, searchQuery]);
-
-  const notesById = useMemo(() => {
-    const map = new Map<string, NoteListItem>();
-    notes.forEach((note) => map.set(note.id, note));
-    return map;
-  }, [notes]);
 
   const unsortedNotes = useMemo(() => filteredNotes.filter((note) => !note.folder_id), [filteredNotes]);
 
@@ -156,14 +145,7 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
       notesByFolderId.set(note.folder_id, list);
     });
 
-    const orderedFolders = [...folders].sort((a, b) => {
-      const aMillis = a.created_at?.toMillis?.() ?? 0;
-      const bMillis = b.created_at?.toMillis?.() ?? 0;
-      if (aMillis === bMillis) {
-        return a.name.localeCompare(b.name);
-      }
-      return aMillis - bMillis;
-    });
+    const orderedFolders = sortFoldersByCreatedAt(folders);
 
     return orderedFolders
       .map((folder) => ({
@@ -207,70 +189,30 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
   }, []);
 
   const renameFolder = useCallback(async (folderId: string, nextName: string) => {
-    const normalized = nextName.trim() || 'New Folder';
+    const normalized = normalizeFolderName(nextName);
     await updateDoc(doc(db, 'note_folders', folderId), {
       name: normalized,
       updated_at: serverTimestamp(),
     });
   }, []);
 
-  const resolveDraggedId = useCallback((event: React.DragEvent<HTMLElement>) => {
-    const transferId = event.dataTransfer.getData('text/plain').trim();
-    if (transferId) return transferId;
-    return draggedNoteId;
-  }, [draggedNoteId]);
-
-  const resetDragState = useCallback(() => {
-    setDraggedNoteId(null);
-    setDragOverFolderId(null);
-    setDragOverUnsorted(false);
-  }, []);
-
-  const handleDropOnNote = useCallback(async (event: React.DragEvent<HTMLElement>, targetNote: NoteListItem) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const sourceId = resolveDraggedId(event);
-    resetDragState();
-
-    if (!sourceId || sourceId === targetNote.id) return;
-    const sourceNote = notesById.get(sourceId);
-    if (!sourceNote) return;
-
-    if (!sourceNote.folder_id && !targetNote.folder_id) {
-      await createFolderFromUnsortedPair(sourceNote.id, targetNote.id);
-      return;
-    }
-
-    if (targetNote.folder_id && sourceNote.folder_id !== targetNote.folder_id) {
-      await moveNoteToFolder(sourceNote.id, targetNote.folder_id);
-    }
-  }, [createFolderFromUnsortedPair, moveNoteToFolder, notesById, resetDragState, resolveDraggedId]);
-
-  const handleDropOnFolder = useCallback(async (event: React.DragEvent<HTMLElement>, folderId: string) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const sourceId = resolveDraggedId(event);
-    resetDragState();
-
-    if (!sourceId) return;
-    const sourceNote = notesById.get(sourceId);
-    if (!sourceNote || sourceNote.folder_id === folderId) return;
-
-    await moveNoteToFolder(sourceId, folderId);
-  }, [moveNoteToFolder, notesById, resetDragState, resolveDraggedId]);
-
-  const handleDropOnUnsorted = useCallback(async (event: React.DragEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const sourceId = resolveDraggedId(event);
-    resetDragState();
-
-    if (!sourceId) return;
-    const sourceNote = notesById.get(sourceId);
-    if (!sourceNote || !sourceNote.folder_id) return;
-
-    await moveNoteToFolder(sourceId, null);
-  }, [moveNoteToFolder, notesById, resetDragState, resolveDraggedId]);
+  const {
+    dragOverFolderId,
+    dragOverUnsorted,
+    handleDropOnFolder,
+    handleDropOnNote,
+    handleDropOnUnsorted,
+    handleFolderDragLeave,
+    handleFolderDragOver,
+    handleNoteDragEnd,
+    handleNoteDragStart,
+    handleUnsortedDragLeave,
+    handleUnsortedDragOver,
+  } = useNotesDragDrop<NoteListItem>({
+    notes,
+    moveNoteToFolder,
+    createFolderFromUnsortedPair,
+  });
 
   const handleDelete = useCallback(
     async (id: string) => {
@@ -304,12 +246,8 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
       <li key={note.id}>
         <div
           draggable
-          onDragStart={(event) => {
-            setDraggedNoteId(note.id);
-            event.dataTransfer.effectAllowed = 'move';
-            event.dataTransfer.setData('text/plain', note.id);
-          }}
-          onDragEnd={resetDragState}
+          onDragStart={(event) => handleNoteDragStart(event, note.id)}
+          onDragEnd={handleNoteDragEnd}
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
             void handleDropOnNote(event, note);
@@ -423,11 +361,8 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
         {/* Navigation / Note List */}
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
           <section
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragOverUnsorted(true);
-            }}
-            onDragLeave={() => setDragOverUnsorted(false)}
+            onDragOver={handleUnsortedDragOver}
+            onDragLeave={handleUnsortedDragLeave}
             onDrop={(event) => {
               void handleDropOnUnsorted(event);
             }}
@@ -452,11 +387,8 @@ export function NotesDrawer({ open, currentNoteId, onClose }: NotesDrawerProps) 
           {visibleFolders.map(({ folder, notes: folderNotes }) => (
             <section
               key={folder.id}
-              onDragOver={(event) => {
-                event.preventDefault();
-                setDragOverFolderId(folder.id);
-              }}
-              onDragLeave={() => setDragOverFolderId((current) => (current === folder.id ? null : current))}
+              onDragOver={(event) => handleFolderDragOver(event, folder.id)}
+              onDragLeave={() => handleFolderDragLeave(folder.id)}
               onDrop={(event) => {
                 void handleDropOnFolder(event, folder.id);
               }}

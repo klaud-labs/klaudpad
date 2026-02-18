@@ -14,6 +14,7 @@ import { SlashCommand } from '@/lib/editor/SlashCommand';
 import { TagChip } from '@/editor/TagChip';
 import { DateChip } from '@/editor/DateChip';
 import { DatePicker } from '@/components/editor/DatePicker';
+import { offOpenDatePicker, onOpenDatePicker } from '@/lib/editor/datePickerEvent';
 
 type RouteParams = { id: string };
 type SyncStatus = 'loading' | 'syncing' | 'synced' | 'error';
@@ -191,9 +192,9 @@ export default function NotePage({ params }: { params: Promise<RouteParams> }) {
       setDatePickerOpen(true);
     };
 
-    (editor as any).on('openDatePicker', handler);
+    onOpenDatePicker(editor, handler);
     return () => {
-      (editor as any).off('openDatePicker', handler);
+      offOpenDatePicker(editor, handler);
     };
   }, [editor]);
 
