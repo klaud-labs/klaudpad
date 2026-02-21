@@ -396,7 +396,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
     return (
       <li key={note.id}>
         <div className={`group relative min-h-[56px] rounded-[var(--rSm)] border px-2 py-1.5 transition-colors ${isActive
-          ? 'border-transparent bg-[color:var(--surface)] hover:border-[color:var(--border2)] hover:bg-[color:var(--surface2)]/70'
+          ? 'border-[color:var(--border2)] bg-[color:var(--surface2)]'
           : 'border-transparent hover:border-[color:var(--border2)] hover:bg-[color:var(--surface2)]/70'
           }`}>
           {isActive && <div className="absolute bottom-1.5 left-0 top-1.5 w-[3px] rounded-full bg-[color:var(--accent)]" />}
@@ -427,7 +427,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
                   </svg>
                 )}
               </div>
-              <p className="shrink-0 text-[9px] uppercase tracking-wide tulis-muted">
+              <p className="shrink-0 text-[11px] font-medium tulis-muted">
                 {note.updatedAt?.toDate
                   ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(note.updatedAt.toDate())
                   : 'Recent'}
@@ -440,7 +440,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
                   {note.tags.slice(0, 2).map((tag) => (
                     <span
                       key={tag}
-                      className="rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-1.5 py-0.5 text-[9px] font-medium tulis-muted"
+                      className="rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-1.5 py-0.5 text-[10px] font-medium tulis-muted"
                     >
                       {tag}
                     </span>
@@ -544,7 +544,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
     <>
       {isSidebarOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/30 transition-opacity duration-200 md:hidden"
+          className="fixed inset-0 z-[140] bg-black/30 transition-opacity duration-200 md:hidden"
           onClick={onClose}
           aria-hidden="true"
         />
@@ -552,14 +552,14 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
 
       <aside
         id="notes-drawer"
-        className={`fixed inset-y-0 left-0 z-50 w-[280px] max-w-[85vw] shrink-0 border-r tulis-border bg-[color:var(--surface)] transition-transform duration-200 md:static md:z-auto md:h-full md:max-w-none md:translate-x-0 md:transition-[width] md:duration-200 ${isSidebarOpen ? 'translate-x-0 md:w-[280px]' : '-translate-x-full md:w-0'}`}
+        className={`fixed inset-y-0 left-0 z-[150] w-[280px] max-w-[85vw] shrink-0 border-r tulis-border bg-[color:var(--surface)] transition-transform duration-200 md:static md:z-auto md:h-full md:max-w-none md:translate-x-0 md:transition-[width] md:duration-200 ${isSidebarOpen ? 'translate-x-0 md:w-[280px]' : '-translate-x-full md:w-0'}`}
       >
         <div className={`flex h-full min-h-0 flex-col ${isSidebarOpen ? 'opacity-100' : 'md:pointer-events-none md:opacity-0'}`}>
           <div className="shrink-0 px-3 pb-3 pt-3">
             <div className="flex items-center justify-between gap-2">
               <Link href="/notes" onClick={closeOnMobile} className="shrink-0 text-left leading-none">
                 <span className="block text-base font-black tracking-tight lowercase tulis-text">tulis</span>
-                <span className="mt-1 block text-[9px] uppercase tracking-[0.18em] tulis-muted opacity-70" style={{ fontFamily: 'var(--font-geist-mono)' }}>
+                <span className="mt-1 block text-[10px] uppercase tracking-[0.18em] tulis-muted opacity-70" style={{ fontFamily: 'var(--font-geist-mono)' }}>
                   by yun
                 </span>
               </Link>
@@ -571,8 +571,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
                 className="group flex h-9 w-9 items-center justify-center rounded-[var(--rSm)] border tulis-border bg-[color:var(--surface)] transition-colors hover:border-[color:var(--accent)] hover:bg-[color:var(--surface2)] md:hidden"
               >
                 <svg className="h-4 w-4 tulis-muted transition-colors group-hover:text-[color:var(--accent)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">
-                  <line x1="6" y1="6" x2="18" y2="18" strokeLinecap="round" />
-                  <line x1="18" y1="6" x2="6" y2="18" strokeLinecap="round" />
+                  <polyline points="15 18 9 12 15 6" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
             </div>
@@ -646,7 +645,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
                         role="tab"
                         aria-selected={isActive}
                         onClick={() => setActiveView(option.value)}
-                        className={`h-full flex-1 rounded-[calc(var(--rSm)-4px)] px-2 text-xs font-medium tracking-[0.02em] transition-colors ${isActive
+                        className={`h-full flex-1 rounded-[calc(var(--rSm)-4px)] px-2 text-[13px] font-medium tracking-[0.02em] transition-colors ${isActive
                           ? 'text-[color:var(--accent)]'
                           : 'bg-transparent text-[color:var(--text2)] hover:text-[color:var(--text)]'
                           }`}
@@ -664,7 +663,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
           <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
             {sidebarMode === 'notes' && (
               <div>
-                <p className="pl-3 text-[10px] font-semibold uppercase tracking-[0.15em] text-[color:var(--text3)]">Tags</p>
+                <p className="pl-3 text-[11px] font-semibold uppercase tracking-[0.15em] text-[color:var(--text3)]">Tags</p>
                 <div className="mt-1.5 space-y-1.5">
                   {allTags.length === 0 ? (
                     <p className="pl-4 text-xs tulis-muted">No tags yet</p>
@@ -706,7 +705,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="truncate text-xs font-semibold tulis-text">{userDisplayName}</p>
-                <p className="truncate text-[10px] tulis-muted">Yun Labs</p>
+                <p className="truncate text-xs tulis-muted">Yun Labs</p>
               </div>
 
               <div className="flex items-center gap-1.5">
@@ -724,7 +723,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
                       router.replace(`/notes/${notesInTrash[0].id}`);
                     }
                   }}
-                  className={`flex h-9 w-9 items-center justify-center rounded-[var(--rSm)] border transition-colors duration-150 focus:outline-none ${sidebarMode === 'trash'
+                  className={`flex h-9 w-9 items-center justify-center rounded-[var(--rSm)] border transition-colors duration-150 ${sidebarMode === 'trash'
                     ? 'border-[color:var(--accent)] bg-[color:var(--surface2)] text-[color:var(--accent)]'
                     : 'border-[color:var(--border)] bg-[color:var(--surface)] text-[color:var(--text2)] hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
                     }`}
@@ -738,7 +737,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
                 <button
                   type="button"
                   onClick={() => setConfirmingLogout(true)}
-                  className="flex h-9 w-9 items-center justify-center rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface)] text-[color:var(--text2)] transition-colors duration-150 hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)] focus:outline-none"
+                  className="flex h-9 w-9 items-center justify-center rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface)] text-[color:var(--text2)] transition-colors duration-150 hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]"
                   title="Logout"
                   aria-label="Logout"
                 >
@@ -753,7 +752,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
       </aside>
 
       {confirmDeleteRowId && (
-        <div className="fixed inset-0 z-[71] flex items-center justify-center bg-black/40 px-4">
+        <div className="fixed inset-0 z-[171] flex items-center justify-center bg-black/40 px-4">
           <div className="tulis-surface w-full max-w-[320px] rounded-[var(--rLg)] border tulis-border p-8">
             <h2 className="mb-2 text-center text-xl font-bold tracking-tight tulis-text">Permanently delete?</h2>
             <p className="mb-8 text-center text-sm tulis-muted">
@@ -785,7 +784,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
       )}
 
       {confirmingLogout && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4">
+        <div className="fixed inset-0 z-[170] flex items-center justify-center bg-black/40 px-4">
           <div className="tulis-surface w-full max-w-[320px] rounded-[var(--rLg)] border tulis-border p-8">
             <h2 className="mb-2 text-center text-xl font-bold tracking-tight tulis-text">Log out?</h2>
             <p className="mb-8 text-center text-sm tulis-muted">You will need to sign in again to access your notes.</p>

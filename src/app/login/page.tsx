@@ -200,7 +200,7 @@ export default function Login() {
         <div className="mb-7 flex flex-col items-center gap-1 text-center">
           <h1 className="text-4xl font-black tracking-tight lowercase tulis-text">tulis</h1>
           <p
-            className="text-[11px] uppercase tracking-[0.22em] tulis-muted opacity-70"
+            className="text-xs uppercase tracking-[0.2em] tulis-muted opacity-80"
             style={{ fontFamily: 'var(--font-geist-mono)' }}
           >
             by yun
@@ -230,7 +230,7 @@ export default function Login() {
             Continue with Google
           </button>
 
-          <p className="px-1 text-[11px] font-medium uppercase tracking-[0.12em] tulis-muted">Or use email</p>
+          <p className="px-1 text-xs font-medium uppercase tracking-[0.12em] tulis-muted">Or use email</p>
 
           <form className="space-y-4" onSubmit={handleLogin}>
             {isSignUp && (

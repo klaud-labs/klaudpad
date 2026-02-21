@@ -63,6 +63,7 @@ export default function NotePage() {
     left: 0,
     top: 0,
   });
+  const [mobileToolbarBottom, setMobileToolbarBottom] = useState(12);
   const hasHydratedContentRef = useRef(false);
   const changeVersionRef = useRef(0);
   const savedVersionRef = useRef(0);
@@ -517,6 +518,11 @@ export default function NotePage() {
     setSelectionToolbar((current) => (current.visible ? { ...current, visible: false } : current));
   }, []);
 
+  const isMobileSelectionViewport = useCallback(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 900px), (pointer: coarse)').matches;
+  }, []);
+
   const updateSelectionToolbar = useCallback((targetEditor: Editor | null = editor, options?: { force?: boolean }) => {
     if (!targetEditor || typeof window === 'undefined') {
       hideSelectionToolbar();
@@ -539,7 +545,7 @@ export default function NotePage() {
     }
 
     lastSelectionRangeRef.current = { from, to };
-    const isMobileViewport = window.matchMedia('(max-width: 767px)').matches;
+    const isMobileViewport = isMobileSelectionViewport();
 
     if (isMobileViewport) {
       setSelectionToolbar({
@@ -572,7 +578,7 @@ export default function NotePage() {
     } catch {
       hideSelectionToolbar();
     }
-  }, [editor, hideSelectionToolbar, isReadOnly]);
+  }, [editor, hideSelectionToolbar, isMobileSelectionViewport, isReadOnly]);
 
   const runSelectionMarkToggle = useCallback((mark: 'bold' | 'italic' | 'underline' | 'strike') => {
     if (!editor || isReadOnly) return;
@@ -712,7 +718,15 @@ export default function NotePage() {
         updateSelectionToolbar(editor);
       });
     };
-    const hide = () => hideSelectionToolbar();
+    const hide = () => {
+      if (!isMobileSelectionViewport()) {
+        hideSelectionToolbar();
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        updateSelectionToolbar(editor, { force: true });
+      });
+    };
 
     editor.on('selectionUpdate', refresh);
     editor.on('transaction', refresh);
@@ -726,7 +740,72 @@ export default function NotePage() {
       editor.off('focus', refresh);
       editor.off('blur', hide);
     };
-  }, [editor, hideSelectionToolbar, updateSelectionToolbar]);
+  }, [editor, hideSelectionToolbar, isMobileSelectionViewport, updateSelectionToolbar]);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const handleSelectionChange = () => {
+      if (isReadOnly) return;
+      if (!isMobileSelectionViewport()) return;
+
+      const domSelection = window.getSelection();
+      if (!domSelection || domSelection.isCollapsed || domSelection.rangeCount === 0) {
+        hideSelectionToolbar();
+        return;
+      }
+
+      const anchorNode = domSelection.anchorNode;
+      const focusNode = domSelection.focusNode;
+      const isInsideEditor = Boolean(
+        (anchorNode && editor.view.dom.contains(anchorNode))
+        || (focusNode && editor.view.dom.contains(focusNode))
+      );
+
+      if (!isInsideEditor) {
+        hideSelectionToolbar();
+        return;
+      }
+
+      window.requestAnimationFrame(() => {
+        updateSelectionToolbar(editor, { force: true });
+      });
+    };
+
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => {
+      document.removeEventListener('selectionchange', handleSelectionChange);
+    };
+  }, [editor, hideSelectionToolbar, isMobileSelectionViewport, isReadOnly, updateSelectionToolbar]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!selectionToolbar.visible || !selectionToolbar.isMobile) return;
+
+    const syncBottomInset = () => {
+      const viewport = window.visualViewport;
+      if (!viewport) {
+        setMobileToolbarBottom(12);
+        return;
+      }
+
+      const occludedBottom = Math.max(0, window.innerHeight - (viewport.height + viewport.offsetTop));
+      setMobileToolbarBottom(12 + occludedBottom);
+    };
+
+    syncBottomInset();
+
+    const viewport = window.visualViewport;
+    viewport?.addEventListener('resize', syncBottomInset);
+    viewport?.addEventListener('scroll', syncBottomInset);
+    window.addEventListener('resize', syncBottomInset);
+
+    return () => {
+      viewport?.removeEventListener('resize', syncBottomInset);
+      viewport?.removeEventListener('scroll', syncBottomInset);
+      window.removeEventListener('resize', syncBottomInset);
+    };
+  }, [selectionToolbar.isMobile, selectionToolbar.visible]);
 
   useEffect(() => {
     if (!editor) return;
@@ -1143,7 +1222,7 @@ export default function NotePage() {
 
         <main
           ref={editorScrollRef}
-          className="min-h-0 flex-1 overflow-y-auto px-4 pb-16 pt-5 sm:px-6"
+          className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-5 sm:px-6 sm:pb-16"
           onMouseDown={(event) => {
             if (!editor) return;
             if (isReadOnly) return;
@@ -1202,28 +1281,69 @@ export default function NotePage() {
               <EditorContent
                 editor={editor}
                 className="prose prose-lg dark:prose-invert max-w-none focus:outline-none tulis-text"
+                onContextMenu={(event) => {
+                  if (isReadOnly) return;
+                  if (!isMobileSelectionViewport()) return;
+                  event.preventDefault();
+                  window.requestAnimationFrame(() => {
+                    updateSelectionToolbar(editor, { force: true });
+                  });
+                }}
               />
             </div>
           )}
         </main>
       </div>
 
-      {!isReadOnly && selectionToolbar.visible && (
+      {!isReadOnly && selectionToolbar.visible && selectionToolbar.isMobile && (
+        <div
+          className="tulis-selection-toolbar pointer-events-none fixed inset-x-2 z-50 sm:inset-x-4"
+          style={{ bottom: `calc(${mobileToolbarBottom}px + env(safe-area-inset-bottom))` }}
+        >
+          <div className="pointer-events-auto mx-auto w-full max-w-[840px] rounded-[var(--rMd)] border border-[color:var(--border2)] bg-[color:var(--surface2)] px-2.5 py-2 shadow-md">
+            <div className="flex items-center gap-1">
+              {selectionToolbarButtons.map((button) => (
+                <button
+                  key={button.id}
+                  type="button"
+                  aria-label={button.ariaLabel}
+                  aria-pressed={button.active}
+                  disabled={button.disabled}
+                  onPointerDown={(event) => {
+                    if (button.disabled) return;
+                    event.preventDefault();
+                    button.onPress();
+                  }}
+                  onKeyDown={(event) => {
+                    if (button.disabled) return;
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    button.onPress();
+                  }}
+                  className={`inline-flex h-9 flex-1 items-center justify-center rounded-[var(--rSm)] border text-sm transition-colors ${button.disabled
+                    ? 'cursor-not-allowed border-transparent text-[color:var(--text3)] opacity-55'
+                    : button.active
+                      ? 'border-[color:var(--accent)] bg-[color:var(--surface)] text-[color:var(--accent)]'
+                      : 'border-transparent tulis-muted hover:border-[color:var(--border)] hover:bg-[color:var(--surface)] hover:text-[color:var(--text)]'} ${button.className}`}
+                >
+                  {button.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!isReadOnly && selectionToolbar.visible && !selectionToolbar.isMobile && (
         <div
           className="tulis-selection-toolbar pointer-events-none fixed z-50"
-          style={selectionToolbar.isMobile
-            ? {
-              left: '50%',
-              bottom: 'max(0.75rem, env(safe-area-inset-bottom))',
-              transform: 'translateX(-50%)',
-            }
-            : {
-              left: `${selectionToolbar.left}px`,
-              top: `${selectionToolbar.top}px`,
-              transform: 'translate(-50%, -100%)',
-            }}
+          style={{
+            left: `${selectionToolbar.left}px`,
+            top: `${selectionToolbar.top}px`,
+            transform: 'translate(-50%, -100%)',
+          }}
         >
-          <div className={`pointer-events-auto flex items-center gap-1 rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] shadow-md ${selectionToolbar.isMobile ? 'w-[min(92vw,360px)] px-2 py-2' : 'px-1.5 py-1.5'}`}>
+          <div className="pointer-events-auto flex items-center gap-1 rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] px-1.5 py-1.5 shadow-md">
             {selectionToolbarButtons.map((button) => (
               <button
                 key={button.id}
@@ -1242,11 +1362,11 @@ export default function NotePage() {
                   event.preventDefault();
                   button.onPress();
                 }}
-                className={`inline-flex items-center justify-center rounded-[var(--rSm)] border text-sm transition-colors ${selectionToolbar.isMobile ? 'h-10 flex-1' : 'h-8 w-8'} ${button.disabled
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border text-sm transition-colors ${button.disabled
                   ? 'cursor-not-allowed border-transparent text-[color:var(--text3)] opacity-55'
                   : button.active
-                  ? 'border-[color:var(--accent)] bg-[color:var(--surface2)] text-[color:var(--accent)]'
-                  : 'border-transparent tulis-muted hover:border-[color:var(--border)] hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'} ${button.className}`}
+                    ? 'border-[color:var(--accent)] bg-[color:var(--surface2)] text-[color:var(--accent)]'
+                    : 'border-transparent tulis-muted hover:border-[color:var(--border)] hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'} ${button.className}`}
               >
                 {button.label}
               </button>

@@ -3,7 +3,7 @@
 :root {
   --accent: #4f46e5;
   --accentHover: #4338ca;
-  --focusRing: rgba(79, 70, 229, 0.35);
+  --focusRing: rgba(79, 70, 229, 0.45);
 
   --rSm: 10px;
   --rMd: 14px;
@@ -96,6 +96,18 @@ textarea:disabled {
   cursor: not-allowed;
 }
 
+button:focus-visible,
+a[href]:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role='button']:focus-visible,
+[role='tab']:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--focusRing) !important;
+  outline-offset: 2px;
+}
+
 /* Standardize text input focus: thin accent border, no outer glow */
 input[type='text'],
 input[type='email'],
@@ -156,6 +168,12 @@ textarea:focus {
 .ProseMirror:focus {
   outline: none;
   box-shadow: none;
+}
+
+@media (pointer: coarse) {
+  .ProseMirror {
+    -webkit-touch-callout: none;
+  }
 }
 
 .ProseMirror a,

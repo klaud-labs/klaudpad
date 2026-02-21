@@ -6,6 +6,7 @@ import { auth } from '@/lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { ensureUserAppRegistration } from '@/lib/userRegistration';
 import { ensureUserHasNote } from '@/lib/notesLifecycle';
+import { LoadingNotesScreen } from '@/components/LoadingNotesScreen';
 
 export default function Home() {
   const router = useRouter();
@@ -42,9 +43,5 @@ export default function Home() {
     return () => unsubscribe();
   }, [router]);
 
-  return (
-    <div className="flex min-h-screen items-center justify-center tulis-bg">
-      <p className="text-xs font-semibold uppercase tracking-[0.12em] tulis-muted">Opening notes...</p>
-    </div>
-  );
+  return <LoadingNotesScreen />;
 }
