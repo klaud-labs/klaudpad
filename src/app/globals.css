@@ -143,6 +143,16 @@ textarea:focus {
   border-top-color: var(--border);
 }
 
+.tulis-return-notes-btn {
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+:root[data-theme='dark'] .tulis-return-notes-btn:hover {
+  background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border2));
+  color: #ffffff;
+}
+
 .ProseMirror:focus {
   outline: none;
   box-shadow: none;
@@ -632,12 +642,20 @@ textarea:focus {
   padding-left: 0;
 }
 
+.ProseMirror ul[data-type='taskList'] ul[data-type='taskList'] {
+  margin: 0.25rem 0 0;
+}
+
 .ProseMirror ul[data-type='taskList'] li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.55rem;
   margin: 0.35rem 0;
   padding-left: 0;
+}
+
+.ProseMirror ul[data-type='taskList'] li[data-type='taskItem'] {
+  align-items: flex-start;
 }
 
 .ProseMirror ul[data-type='taskList'] li::marker {
@@ -646,10 +664,17 @@ textarea:focus {
 
 .ProseMirror ul[data-type='taskList'] li > label {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 0;
+  align-self: flex-start;
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex: 0 0 auto;
+  line-height: 1;
+  margin-top: calc((1.7em - 1.05rem) / 2);
   user-select: none;
+}
+
+.ProseMirror ul[data-type='taskList'] li > label span {
+  display: none;
 }
 
 .ProseMirror ul[data-type='taskList'] li > label input[type='checkbox'] {

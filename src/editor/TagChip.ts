@@ -71,7 +71,6 @@ export const TagChip = Node.create({
       mergeAttributes(HTMLAttributes, {
         'data-tag-chip': '',
       }),
-      '#',
       ['span', { class: 'tag-chip-text' }, 0],
     ];
   },

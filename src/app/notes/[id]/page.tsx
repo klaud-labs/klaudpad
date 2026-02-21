@@ -5,12 +5,13 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { NotesDrawer } from '@/components/notes/NotesDrawer';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { db } from '@/lib/firebase';
-import { onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+import { deleteDoc, deleteField, getDocs, onSnapshot, query, serverTimestamp, Timestamp, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { appNoteDoc, appNotesCollection } from '@/lib/firestorePaths';
 import { Editor, EditorContent, JSONContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
+import Underline from '@tiptap/extension-underline';
 import { AbbrevExpand } from '@/editor/AbbrevExpand';
 import { SlashCommand } from '@/lib/editor/SlashCommand';
 import { TagChip } from '@/editor/TagChip';
@@ -22,6 +23,13 @@ import { normalizeTag, normalizeTags } from '@/lib/notes';
 import { ensureUserHasNote } from '@/lib/notesLifecycle';
 
 type SyncStatus = 'loading' | 'syncing' | 'synced' | 'error';
+type SelectionToolbarState = {
+  visible: boolean;
+  isMobile: boolean;
+  left: number;
+  top: number;
+};
+type SidebarMode = 'notes' | 'trash';
 
 export default function NotePage() {
   const router = useRouter();
@@ -33,7 +41,12 @@ export default function NotePage() {
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [allUserTags, setAllUserTags] = useState<string[]>([]);
+  const [hasTrashNotes, setHasTrashNotes] = useState(false);
+  const [hasLoadedUserNotes, setHasLoadedUserNotes] = useState(false);
   const [pinned, setPinned] = useState(false);
+  const [isDeleted, setIsDeleted] = useState(false);
+  const [deletedAt, setDeletedAt] = useState<Timestamp | null>(null);
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>('notes');
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === 'undefined') return true;
     return !window.matchMedia('(max-width: 767px)').matches;
@@ -43,6 +56,13 @@ export default function NotePage() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('loading');
   const [isTitleFocused, setIsTitleFocused] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [confirmPermanentDeleteOpen, setConfirmPermanentDeleteOpen] = useState(false);
+  const [selectionToolbar, setSelectionToolbar] = useState<SelectionToolbarState>({
+    visible: false,
+    isMobile: false,
+    left: 0,
+    top: 0,
+  });
   const hasHydratedContentRef = useRef(false);
   const changeVersionRef = useRef(0);
   const savedVersionRef = useRef(0);
@@ -51,9 +71,15 @@ export default function NotePage() {
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const tagInputRef = useRef<HTMLInputElement | null>(null);
   const tagPopoverRef = useRef<HTMLDivElement | null>(null);
+  const editorScrollRef = useRef<HTMLElement | null>(null);
+  const lastSelectionRangeRef = useRef<{ from: number; to: number } | null>(null);
+  const selectionGestureActiveRef = useRef(false);
   const focusedTitleForNoteRef = useRef<string | null>(null);
   const recoveringNoteRef = useRef(false);
+  const trashCleanupRunningRef = useRef(false);
   const shouldFocusTitle = searchParams.get('focus') === 'title';
+  const isReadOnly = isDeleted || sidebarMode === 'trash';
+  const isTrashEmptyView = sidebarMode === 'trash' && hasLoadedUserNotes && !hasTrashNotes;
 
   useEffect(() => {
     if (noteId) {
@@ -65,6 +91,7 @@ export default function NotePage() {
     hasHydratedContentRef.current = false;
     changeVersionRef.current = 0;
     savedVersionRef.current = 0;
+    setConfirmPermanentDeleteOpen(false);
   }, [noteId]);
 
   const markDirty = useCallback(() => {
@@ -115,6 +142,7 @@ export default function NotePage() {
         codeBlock: false,
       }),
       CodeBlock,
+      Underline,
       TaskList,
       TaskItem.configure({ nested: true }),
       TagChip,
@@ -128,7 +156,12 @@ export default function NotePage() {
   });
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setAllUserTags([]);
+      setHasTrashNotes(false);
+      setHasLoadedUserNotes(false);
+      return;
+    }
 
     const byOwnerUid = query(appNotesCollection(db), where('ownerUid', '==', user.uid));
 
@@ -137,6 +170,7 @@ export default function NotePage() {
 
       docs.forEach((snapshotDoc) => {
         const data = snapshotDoc.data();
+        if (data.is_deleted === true) return;
         if (!Array.isArray(data.tags)) return;
         data.tags.forEach((tag) => {
           if (typeof tag !== 'string') return;
@@ -152,6 +186,8 @@ export default function NotePage() {
 
     const sync = () => {
       setAllUserTags(collectTags(ownerUidDocs));
+      setHasTrashNotes(ownerUidDocs.some((snapshotDoc) => snapshotDoc.data().is_deleted === true));
+      setHasLoadedUserNotes(true);
     };
 
     const unsubscribeOwnerUid = onSnapshot(byOwnerUid, (snapshot) => {
@@ -163,6 +199,7 @@ export default function NotePage() {
         return;
       }
       console.error('Tag sync error (ownerUid):', error);
+      setHasLoadedUserNotes(true);
     });
 
     return () => {
@@ -183,6 +220,13 @@ export default function NotePage() {
       const data = snapshot.data();
       setTitle(typeof data.title === 'string' ? data.title : '');
       setPinned(Boolean(data.pinned));
+      const deleted = data.is_deleted === true;
+      setIsDeleted(deleted);
+      setDeletedAt((data.deleted_at as Timestamp | null) || null);
+      if (deleted) {
+        setSidebarMode('trash');
+        setIsTagPopoverOpen(false);
+      }
       try {
         window.localStorage.setItem(`tulis:lastNoteId:${user.uid}`, noteId);
       } catch {
@@ -230,6 +274,16 @@ export default function NotePage() {
     return () => unsubscribe();
   }, [noteId, editor, user, redirectToAccessibleNote]);
 
+  useEffect(() => {
+    if (!editor) return;
+    editor.setEditable(!isReadOnly);
+    if (isReadOnly) {
+      setIsTagPopoverOpen(false);
+      setDatePickerOpen(false);
+      setSelectionToolbar((current) => (current.visible ? { ...current, visible: false } : current));
+    }
+  }, [editor, isReadOnly]);
+
   const saveContentNow = useCallback(async ({
     content,
     plainText,
@@ -239,7 +293,7 @@ export default function NotePage() {
     plainText: string;
     version: number;
   }) => {
-    if (!noteId || !user) return;
+    if (!noteId || !user || isReadOnly) return;
 
     try {
       const noteRef = appNoteDoc(db, noteId);
@@ -254,10 +308,10 @@ export default function NotePage() {
       console.error('Failed to save content:', error);
       setSyncStatus('error');
     }
-  }, [noteId, user, markSaved]);
+  }, [isReadOnly, noteId, user, markSaved]);
 
   const saveTitleNow = useCallback(async ({ newTitle, version }: { newTitle: string; version: number }) => {
-    if (!noteId || !user) return;
+    if (!noteId || !user || isReadOnly) return;
 
     try {
       const noteRef = appNoteDoc(db, noteId);
@@ -271,10 +325,10 @@ export default function NotePage() {
       console.error('Failed to save title:', error);
       setSyncStatus('error');
     }
-  }, [noteId, user, markSaved]);
+  }, [isReadOnly, noteId, user, markSaved]);
 
   const saveTagsNow = useCallback(async (nextTags: string[]) => {
-    if (!noteId || !user) return;
+    if (!noteId || !user || isReadOnly) return;
 
     const normalized = normalizeTags(nextTags);
     setTags(normalized);
@@ -289,10 +343,10 @@ export default function NotePage() {
       console.error('Failed to save tags:', error);
       setSyncStatus('error');
     }
-  }, [noteId, user]);
+  }, [isReadOnly, noteId, user]);
 
   const togglePinned = useCallback(async () => {
-    if (!noteId || !user) return;
+    if (!noteId || !user || isReadOnly) return;
 
     const nextPinned = !pinned;
     setPinned(nextPinned);
@@ -308,7 +362,99 @@ export default function NotePage() {
       setSyncStatus('error');
       setPinned(!nextPinned);
     }
-  }, [noteId, user, pinned]);
+  }, [isReadOnly, noteId, user, pinned]);
+
+  const restoreNoteFromTrash = useCallback(async () => {
+    if (!noteId || !user || !isDeleted) return;
+
+    try {
+      await updateDoc(appNoteDoc(db, noteId), {
+        is_deleted: false,
+        deleted_at: deleteField(),
+        updatedAt: serverTimestamp(),
+        updated_at: serverTimestamp(),
+      });
+      setSidebarMode('notes');
+      setConfirmPermanentDeleteOpen(false);
+    } catch (error) {
+      console.error('Failed to restore note:', error);
+      setSyncStatus('error');
+    }
+  }, [isDeleted, noteId, user]);
+
+  const cleanupExpiredTrashNotes = useCallback(async () => {
+    if (!user || trashCleanupRunningRef.current) return;
+
+    trashCleanupRunningRef.current = true;
+    try {
+      const retentionMs = 30 * 24 * 60 * 60 * 1000;
+      const cutoffMs = Date.now() - retentionMs;
+      const snapshot = await getDocs(query(appNotesCollection(db), where('ownerUid', '==', user.uid)));
+
+      const expiredDocs = snapshot.docs.filter((docSnapshot) => {
+        const data = docSnapshot.data();
+        if (data.is_deleted !== true) return false;
+        const deletedAt = (data.deleted_at as Timestamp | null) || null;
+        if (!deletedAt?.toMillis) return false;
+        return deletedAt.toMillis() <= cutoffMs;
+      });
+
+      if (expiredDocs.length === 0) return;
+
+      for (let index = 0; index < expiredDocs.length; index += 500) {
+        const batch = writeBatch(db);
+        expiredDocs.slice(index, index + 500).forEach((docSnapshot) => {
+          batch.delete(docSnapshot.ref);
+        });
+        await batch.commit();
+      }
+    } catch (error) {
+      console.error('Failed to clean expired trash notes:', error);
+    } finally {
+      trashCleanupRunningRef.current = false;
+    }
+  }, [user]);
+
+  const permanentlyDeleteCurrentNote = useCallback(async () => {
+    if (!noteId || !user) return;
+
+    try {
+      await deleteDoc(appNoteDoc(db, noteId));
+      setConfirmPermanentDeleteOpen(false);
+
+      if (sidebarMode === 'trash') {
+        const snapshot = await getDocs(query(appNotesCollection(db), where('ownerUid', '==', user.uid)));
+        const remainingTrash = snapshot.docs
+          .map((docSnapshot) => {
+            const data = docSnapshot.data();
+            return {
+              id: docSnapshot.id,
+              isDeleted: data.is_deleted === true,
+              deletedAt: (data.deleted_at as Timestamp | null) || null,
+            };
+          })
+          .filter((item) => item.id !== noteId && item.isDeleted)
+          .sort((a, b) => (b.deletedAt?.toMillis?.() ?? 0) - (a.deletedAt?.toMillis?.() ?? 0));
+
+        if (remainingTrash.length > 0) {
+          router.replace(`/notes/${remainingTrash[0].id}`);
+          return;
+        }
+      }
+
+      const { noteId: nextNoteId, created } = await ensureUserHasNote(user.uid, { excludeNoteId: noteId });
+      setSidebarMode('notes');
+      router.replace(created ? `/notes/${nextNoteId}?focus=title` : `/notes/${nextNoteId}`);
+    } catch (error) {
+      console.error('Failed to permanently delete note:', error);
+      setSyncStatus('error');
+    }
+  }, [noteId, router, sidebarMode, user]);
+
+  useEffect(() => {
+    if (!user || sidebarMode !== 'trash') return;
+    void cleanupExpiredTrashNotes();
+  }, [cleanupExpiredTrashNotes, sidebarMode, user]);
 
   const scheduleContentSave = useCallback((payload: { content: JSONContent; plainText: string; version: number }) => {
     if (contentSaveTimeoutRef.current) {
@@ -329,11 +475,12 @@ export default function NotePage() {
   }, [saveTitleNow]);
 
   const openTagPopover = useCallback(() => {
+    if (isReadOnly) return;
     setIsTagPopoverOpen(true);
     window.requestAnimationFrame(() => {
       tagInputRef.current?.focus();
     });
-  }, []);
+  }, [isReadOnly]);
 
   const tagSuggestions = useMemo(() => {
     const normalizedInput = normalizeTag(tagInput) || tagInput.trim().toLowerCase();
@@ -366,10 +513,132 @@ export default function NotePage() {
     void saveTagsNow([...tags, normalized]);
   }, [tagInput, tags, saveTagsNow]);
 
+  const hideSelectionToolbar = useCallback(() => {
+    setSelectionToolbar((current) => (current.visible ? { ...current, visible: false } : current));
+  }, []);
+
+  const updateSelectionToolbar = useCallback((targetEditor: Editor | null = editor, options?: { force?: boolean }) => {
+    if (!targetEditor || typeof window === 'undefined') {
+      hideSelectionToolbar();
+      return;
+    }
+    if (isReadOnly) {
+      hideSelectionToolbar();
+      return;
+    }
+
+    if (selectionGestureActiveRef.current && !options?.force) {
+      hideSelectionToolbar();
+      return;
+    }
+
+    const { from, to, empty } = targetEditor.state.selection;
+    if (empty || targetEditor.isActive('codeBlock')) {
+      hideSelectionToolbar();
+      return;
+    }
+
+    lastSelectionRangeRef.current = { from, to };
+    const isMobileViewport = window.matchMedia('(max-width: 767px)').matches;
+
+    if (isMobileViewport) {
+      setSelectionToolbar({
+        visible: true,
+        isMobile: true,
+        left: window.innerWidth / 2,
+        top: 0,
+      });
+      return;
+    }
+
+    try {
+      const start = targetEditor.view.coordsAtPos(from);
+      const end = targetEditor.view.coordsAtPos(to);
+      const centerX = (start.left + end.right) / 2;
+      const estimatedWidth = 230;
+      const edgePadding = 12;
+      const left = Math.max(
+        edgePadding + estimatedWidth / 2,
+        Math.min(centerX, window.innerWidth - edgePadding - estimatedWidth / 2),
+      );
+      const top = Math.max(12, Math.min(start.top, end.top) - 10);
+
+      setSelectionToolbar({
+        visible: true,
+        isMobile: false,
+        left,
+        top,
+      });
+    } catch {
+      hideSelectionToolbar();
+    }
+  }, [editor, hideSelectionToolbar, isReadOnly]);
+
+  const runSelectionMarkToggle = useCallback((mark: 'bold' | 'italic' | 'underline' | 'strike') => {
+    if (!editor || isReadOnly) return;
+
+    const chain = editor.chain().focus();
+    if (editor.state.selection.empty && lastSelectionRangeRef.current) {
+      chain.setTextSelection(lastSelectionRangeRef.current);
+    }
+
+    if (mark === 'bold') chain.toggleBold();
+    if (mark === 'italic') chain.toggleItalic();
+    if (mark === 'underline') chain.toggleUnderline();
+    if (mark === 'strike') chain.toggleStrike();
+    chain.run();
+
+    window.requestAnimationFrame(() => updateSelectionToolbar(editor));
+  }, [editor, isReadOnly, updateSelectionToolbar]);
+
+  const canShiftListItem = useCallback((direction: 'left' | 'right', itemType: 'taskItem' | 'listItem') => {
+    if (!editor || isReadOnly) return false;
+
+    const selectionStart = lastSelectionRangeRef.current?.from ?? editor.state.selection.from;
+    const canChain = editor.can().chain().focus();
+    canChain.setTextSelection({ from: selectionStart, to: selectionStart });
+
+    if (direction === 'right') {
+      canChain.sinkListItem(itemType);
+    } else {
+      canChain.liftListItem(itemType);
+    }
+
+    return canChain.run();
+  }, [editor, isReadOnly]);
+
+  const runSelectionListShift = useCallback((direction: 'left' | 'right') => {
+    if (!editor || isReadOnly) return;
+
+    const selectionStart = lastSelectionRangeRef.current?.from ?? editor.state.selection.from;
+    const apply = (itemType: 'taskItem' | 'listItem') => {
+      const chain = editor.chain().focus();
+      chain.setTextSelection({ from: selectionStart, to: selectionStart });
+
+      if (direction === 'right') {
+        chain.sinkListItem(itemType);
+      } else {
+        chain.liftListItem(itemType);
+      }
+
+      return chain.run();
+    };
+
+    const didRun = canShiftListItem(direction, 'taskItem')
+      ? apply('taskItem')
+      : canShiftListItem(direction, 'listItem')
+        ? apply('listItem')
+        : false;
+
+    if (!didRun) return;
+    window.requestAnimationFrame(() => updateSelectionToolbar(editor));
+  }, [canShiftListItem, editor, isReadOnly, updateSelectionToolbar]);
+
   useEffect(() => {
     if (!editor) return;
 
     const handler = ({ editor }: { editor: Editor }) => {
+      if (isReadOnly) return;
       const version = markDirty();
       scheduleContentSave({ content: editor.getJSON(), plainText: editor.getText(), version });
     };
@@ -381,12 +650,13 @@ export default function NotePage() {
         clearTimeout(contentSaveTimeoutRef.current);
       }
     };
-  }, [editor, scheduleContentSave, markDirty]);
+  }, [editor, isReadOnly, scheduleContentSave, markDirty]);
 
   useEffect(() => {
     if (!editor) return;
 
     const handler = () => {
+      if (isReadOnly) return;
       setDatePickerOpen(true);
     };
 
@@ -394,10 +664,11 @@ export default function NotePage() {
     return () => {
       offOpenDatePicker(editor, handler);
     };
-  }, [editor]);
+  }, [editor, isReadOnly]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (isReadOnly) return;
       if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
       if (event.key.toLowerCase() !== 't') return;
       event.preventDefault();
@@ -406,7 +677,7 @@ export default function NotePage() {
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [openTagPopover]);
+  }, [isReadOnly, openTagPopover]);
 
   useEffect(() => {
     if (!isTagPopoverOpen) return;
@@ -432,6 +703,102 @@ export default function NotePage() {
       window.removeEventListener('keydown', handleEscape);
     };
   }, [isTagPopoverOpen]);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const refresh = () => {
+      window.requestAnimationFrame(() => {
+        updateSelectionToolbar(editor);
+      });
+    };
+    const hide = () => hideSelectionToolbar();
+
+    editor.on('selectionUpdate', refresh);
+    editor.on('transaction', refresh);
+    editor.on('focus', refresh);
+    editor.on('blur', hide);
+    refresh();
+
+    return () => {
+      editor.off('selectionUpdate', refresh);
+      editor.off('transaction', refresh);
+      editor.off('focus', refresh);
+      editor.off('blur', hide);
+    };
+  }, [editor, hideSelectionToolbar, updateSelectionToolbar]);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const handlePointerDown = () => {
+      selectionGestureActiveRef.current = true;
+      hideSelectionToolbar();
+    };
+
+    const finishSelectionGesture = () => {
+      if (!selectionGestureActiveRef.current) return;
+      selectionGestureActiveRef.current = false;
+      window.requestAnimationFrame(() => {
+        updateSelectionToolbar(editor, { force: true });
+      });
+    };
+
+    editor.view.dom.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('pointerup', finishSelectionGesture);
+    window.addEventListener('pointercancel', finishSelectionGesture);
+    window.addEventListener('mouseup', finishSelectionGesture);
+    window.addEventListener('touchend', finishSelectionGesture);
+    window.addEventListener('touchcancel', finishSelectionGesture);
+
+    return () => {
+      editor.view.dom.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('pointerup', finishSelectionGesture);
+      window.removeEventListener('pointercancel', finishSelectionGesture);
+      window.removeEventListener('mouseup', finishSelectionGesture);
+      window.removeEventListener('touchend', finishSelectionGesture);
+      window.removeEventListener('touchcancel', finishSelectionGesture);
+    };
+  }, [editor, hideSelectionToolbar, updateSelectionToolbar]);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const refresh = () => {
+      window.requestAnimationFrame(() => {
+        updateSelectionToolbar(editor);
+      });
+    };
+
+    const handleResize = () => refresh();
+    const handleScroll = () => refresh();
+
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('scroll', handleScroll, true);
+    const editorScroller = editorScrollRef.current;
+    editorScroller?.addEventListener('scroll', handleScroll);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('scroll', handleScroll, true);
+      editorScroller?.removeEventListener('scroll', handleScroll);
+    };
+  }, [editor, updateSelectionToolbar]);
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('.tulis-selection-toolbar')) return;
+      if (target.closest('.ProseMirror')) return;
+      hideSelectionToolbar();
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [hideSelectionToolbar]);
 
   useEffect(() => {
     return () => {
@@ -460,6 +827,74 @@ export default function NotePage() {
   }, [noteId, ready, shouldFocusTitle]);
 
   const hasTags = tags.length > 0;
+  const displayTitle = isTrashEmptyView ? '' : title;
+  const titlePlaceholder = isTrashEmptyView ? '' : 'Untitled';
+  const autoDeleteDate = useMemo(() => {
+    if (!deletedAt?.toDate) return null;
+    const ms = deletedAt.toDate().getTime() + (30 * 24 * 60 * 60 * 1000);
+    return new Date(ms);
+  }, [deletedAt]);
+  const selectionToolbarButtons = useMemo(() => {
+    const canTabLeft = canShiftListItem('left', 'taskItem') || canShiftListItem('left', 'listItem');
+    const canTabRight = canShiftListItem('right', 'taskItem') || canShiftListItem('right', 'listItem');
+
+    return [
+      {
+        id: 'tab-left',
+        label: '<',
+        ariaLabel: 'Tab left',
+        active: false,
+        disabled: !canTabLeft,
+        onPress: () => runSelectionListShift('left'),
+        className: 'font-semibold',
+      },
+      {
+        id: 'tab-right',
+        label: '>',
+        ariaLabel: 'Tab right',
+        active: false,
+        disabled: !canTabRight,
+        onPress: () => runSelectionListShift('right'),
+        className: 'font-semibold',
+      },
+      {
+        id: 'bold',
+        label: 'B',
+        ariaLabel: 'Toggle bold',
+        active: editor?.isActive('bold') ?? false,
+        disabled: false,
+        onPress: () => runSelectionMarkToggle('bold'),
+        className: 'font-bold',
+      },
+      {
+        id: 'italic',
+        label: 'I',
+        ariaLabel: 'Toggle italic',
+        active: editor?.isActive('italic') ?? false,
+        disabled: false,
+        onPress: () => runSelectionMarkToggle('italic'),
+        className: 'italic',
+      },
+      {
+        id: 'underline',
+        label: 'U',
+        ariaLabel: 'Toggle underline',
+        active: editor?.isActive('underline') ?? false,
+        disabled: false,
+        onPress: () => runSelectionMarkToggle('underline'),
+        className: 'underline decoration-2',
+      },
+      {
+        id: 'strike',
+        label: 'S',
+        ariaLabel: 'Toggle strikethrough',
+        active: editor?.isActive('strike') ?? false,
+        disabled: false,
+        onPress: () => runSelectionMarkToggle('strike'),
+        className: 'line-through decoration-2',
+      },
+    ];
+  }, [canShiftListItem, editor, runSelectionListShift, runSelectionMarkToggle]);
 
   if (!noteId || (authLoading && !user)) {
     return <div className="tulis-bg min-h-screen" />;
@@ -470,6 +905,8 @@ export default function NotePage() {
       <NotesDrawer
         isSidebarOpen={isSidebarOpen}
         currentNoteId={noteId ?? ''}
+        sidebarMode={sidebarMode}
+        onSidebarModeChange={setSidebarMode}
         onClose={() => setIsSidebarOpen(false)}
       />
 
@@ -514,8 +951,10 @@ export default function NotePage() {
                   ? 'border-[color:var(--accent)] bg-[color:var(--surface2)]'
                   : 'border-transparent bg-transparent'
                   }`}
-                value={title}
+                value={displayTitle}
+                readOnly={isReadOnly}
                 onChange={(event) => {
+                  if (isReadOnly) return;
                   const value = event.target.value;
                   setTitle(value);
                   const version = markDirty();
@@ -523,145 +962,160 @@ export default function NotePage() {
                 }}
                 onFocus={() => setIsTitleFocused(true)}
                 onBlur={() => setIsTitleFocused(false)}
-                placeholder="Untitled"
+                placeholder={titlePlaceholder}
               />
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
-              <div className="relative" ref={tagPopoverRef}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isTagPopoverOpen) {
-                      setIsTagPopoverOpen(false);
-                      setTagInput('');
-                      return;
-                    }
-                    openTagPopover();
-                  }}
-                  className={`inline-flex h-8 rounded-[var(--rSm)] border text-[10px] font-semibold uppercase tracking-[0.1em] transition-colors ${hasTags ? 'items-center gap-1 px-2' : 'w-8 items-center justify-center px-0'} ${isTagPopoverOpen
-                    ? 'border-[color:var(--accent)] text-[color:var(--accent)] bg-[color:var(--surface2)]'
-                    : 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
-                    }`}
-                  aria-label="Manage tags"
-                  title="Manage tags"
-                >
-                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="m20 13-7 7H4v-9l7-7 9 9Z" strokeLinecap="round" strokeLinejoin="round" />
-                    <circle cx="7.5" cy="7.5" r="1.5" />
-                  </svg>
-                  {hasTags ? `${tags.length}` : null}
-                </button>
+              {!isReadOnly && (
+                <>
+                  <div className="relative" ref={tagPopoverRef}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isTagPopoverOpen) {
+                          setIsTagPopoverOpen(false);
+                          setTagInput('');
+                          return;
+                        }
+                        openTagPopover();
+                      }}
+                      className={`inline-flex h-8 rounded-[var(--rSm)] border text-[10px] font-semibold uppercase tracking-[0.1em] transition-colors ${hasTags ? 'items-center gap-1 px-2' : 'w-8 items-center justify-center px-0'} ${isTagPopoverOpen
+                        ? 'border-[color:var(--accent)] text-[color:var(--accent)] bg-[color:var(--surface2)]'
+                        : 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
+                        }`}
+                      aria-label="Manage tags"
+                      title="Manage tags"
+                    >
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="m20 13-7 7H4v-9l7-7 9 9Z" strokeLinecap="round" strokeLinejoin="round" />
+                        <circle cx="7.5" cy="7.5" r="1.5" />
+                      </svg>
+                      {hasTags ? `${tags.length}` : null}
+                    </button>
 
-                {isTagPopoverOpen && (
-                  <div className="absolute right-0 top-10 z-50 w-[300px] max-w-[calc(100vw-1rem)] rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] p-3 shadow-sm">
-                    <div className="mb-2 flex items-center justify-between">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] tulis-muted">Tags</p>
-                      {hasTags && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void saveTagsNow([]);
-                          }}
-                          className="text-[10px] font-medium uppercase tracking-[0.08em] tulis-muted transition-colors hover:text-[color:var(--text)]"
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
-
-                    {hasTags && (
-                      <div className="mb-2 flex flex-wrap gap-1.5">
-                        {tags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-2 py-1 text-xs font-medium tulis-text"
-                          >
-                            #{tag}
+                    {isTagPopoverOpen && (
+                      <div className="absolute right-0 top-10 z-50 w-[300px] max-w-[calc(100vw-1rem)] rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] p-3 shadow-sm">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] tulis-muted">Tags</p>
+                          {hasTags && (
                             <button
                               type="button"
                               onClick={() => {
-                                void saveTagsNow(tags.filter((item) => item !== tag));
+                                void saveTagsNow([]);
                               }}
-                              className="rounded-full p-0.5 tulis-muted transition-colors hover:text-[color:var(--text)]"
-                              aria-label={`Remove ${tag} tag`}
+                              className="text-[10px] font-medium uppercase tracking-[0.08em] tulis-muted transition-colors hover:text-[color:var(--text)]"
                             >
-                              <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">
-                                <line x1="6" y1="6" x2="18" y2="18" strokeLinecap="round" />
-                                <line x1="18" y1="6" x2="6" y2="18" strokeLinecap="round" />
-                              </svg>
+                              Clear
                             </button>
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                          )}
+                        </div>
 
-                    <div>
-                      <input
-                        ref={tagInputRef}
-                        value={tagInput}
-                        onChange={(event) => setTagInput(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ',') {
+                        {hasTags && (
+                          <div className="mb-2 flex flex-wrap gap-1.5">
+                            {tags.map((tag) => (
+                              <span
+                                key={tag}
+                                className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-2 py-1 text-xs font-medium tulis-text"
+                              >
+                                {tag}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void saveTagsNow(tags.filter((item) => item !== tag));
+                                  }}
+                                  className="rounded-full p-0.5 tulis-muted transition-colors hover:text-[color:var(--text)]"
+                                  aria-label={`Remove ${tag} tag`}
+                                >
+                                  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">
+                                    <line x1="6" y1="6" x2="18" y2="18" strokeLinecap="round" />
+                                    <line x1="18" y1="6" x2="6" y2="18" strokeLinecap="round" />
+                                  </svg>
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <form
+                          onSubmit={(event) => {
                             event.preventDefault();
                             addTagFromInput();
-                          }
-                          if (event.key === 'Escape') {
-                            event.preventDefault();
-                            setIsTagPopoverOpen(false);
-                            setTagInput('');
-                          }
-                          if (event.key === 'Backspace' && !tagInput.trim() && tags.length > 0) {
-                            event.preventDefault();
-                            void saveTagsNow(tags.slice(0, -1));
-                          }
-                        }}
-                        placeholder={tags.length >= 10 ? 'Tag limit reached' : 'Press enter to add tag'}
-                        disabled={tags.length >= 10}
-                        className="h-8 w-full rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface)] px-2.5 text-xs tulis-text placeholder:text-[color:var(--text3)] focus:border-[color:var(--accent)] focus:outline-none disabled:opacity-50"
-                      />
-                    </div>
-
-                    {tagSuggestions.length > 0 && (
-                      <div className="mt-2 max-h-28 overflow-y-auto rounded-[var(--rSm)] border border-[color:var(--border2)] bg-[color:var(--surface2)] p-1">
-                        {tagSuggestions.map((tag) => (
-                          <button
-                            key={tag}
-                            type="button"
-                            onClick={() => {
-                              if (tags.includes(tag) || tags.length >= 10) return;
-                              void saveTagsNow([...tags, tag]);
-                              setTagInput('');
+                          }}
+                        >
+                          <input
+                            ref={tagInputRef}
+                            value={tagInput}
+                            onChange={(event) => setTagInput(event.target.value)}
+                            onKeyDown={(event) => {
+                              if ((event.key === 'Enter' || event.key === ',') && !event.nativeEvent.isComposing) {
+                                event.preventDefault();
+                                addTagFromInput();
+                              }
+                              if (event.key === 'Escape') {
+                                event.preventDefault();
+                                setIsTagPopoverOpen(false);
+                                setTagInput('');
+                              }
+                              if (event.key === 'Backspace' && !tagInput.trim() && tags.length > 0) {
+                                event.preventDefault();
+                                void saveTagsNow(tags.slice(0, -1));
+                              }
                             }}
-                            className="w-full rounded-[var(--rSm)] px-2 py-1 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface)] hover:text-[color:var(--text)]"
-                          >
-                            #{tag}
+                            placeholder={tags.length >= 10 ? 'Tag limit reached' : 'Press enter to add tag'}
+                            disabled={tags.length >= 10}
+                            enterKeyHint="done"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            className="h-8 w-full rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface)] px-2.5 text-xs tulis-text placeholder:text-[color:var(--text3)] focus:border-[color:var(--accent)] focus:outline-none disabled:opacity-50"
+                          />
+                          <button type="submit" tabIndex={-1} aria-hidden="true" className="sr-only">
+                            Add tag
                           </button>
-                        ))}
+                        </form>
+
+                        {tagSuggestions.length > 0 && (
+                          <div className="mt-2 max-h-28 overflow-y-auto rounded-[var(--rSm)] border border-[color:var(--border2)] bg-[color:var(--surface2)] p-1">
+                            {tagSuggestions.map((tag) => (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() => {
+                                  if (tags.includes(tag) || tags.length >= 10) return;
+                                  void saveTagsNow([...tags, tag]);
+                                  setTagInput('');
+                                }}
+                                className="w-full rounded-[var(--rSm)] px-2 py-1 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface)] hover:text-[color:var(--text)]"
+                              >
+                                {tag}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                )}
-              </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  void togglePinned();
-                }}
-                className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${pinned
-                  ? 'border-[color:var(--accent)] text-[color:var(--accent)] bg-[color:var(--surface2)]'
-                  : 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
-                  }`}
-                aria-label={pinned ? 'Unpin note' : 'Pin note'}
-                title={pinned ? 'Unpin note' : 'Pin note'}
-              >
-                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="m12 17 4 4V9l3-5H5l3 5v12l4-4Z" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void togglePinned();
+                    }}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${pinned
+                      ? 'border-[color:var(--accent)] text-[color:var(--accent)] bg-[color:var(--surface2)]'
+                      : 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
+                      }`}
+                    aria-label={pinned ? 'Unpin note' : 'Pin note'}
+                    title={pinned ? 'Unpin note' : 'Pin note'}
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="m12 17 4 4V9l3-5H5l3 5v12l4-4Z" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </>
+              )}
 
-              {ready && (
+              {!isReadOnly && ready && (
                 <span className="hidden shrink-0 items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] tulis-muted sm:inline-flex">
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${syncStatus === 'syncing'
@@ -688,32 +1142,153 @@ export default function NotePage() {
         </header>
 
         <main
+          ref={editorScrollRef}
           className="min-h-0 flex-1 overflow-y-auto px-4 pb-16 pt-5 sm:px-6"
           onMouseDown={(event) => {
             if (!editor) return;
+            if (isReadOnly) return;
             const target = event.target as HTMLElement | null;
             if (target?.closest('.ProseMirror')) return;
             event.preventDefault();
             editor.commands.focus('end');
           }}
         >
-          <div className="mx-auto min-h-full max-w-[840px] min-w-0">
-            <EditorContent
-              editor={editor}
-              className="prose prose-lg dark:prose-invert max-w-none focus:outline-none tulis-text"
-            />
-          </div>
+          {isDeleted && (
+            <div className="sticky top-3 z-30 mx-auto mb-4 max-w-[840px]" data-trash-banner>
+              <div className="rounded-[var(--rMd)] border border-[color:var(--border2)] bg-[color:var(--surface2)] px-3 py-2.5 shadow-md">
+                <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
+                  <p className="text-xs tulis-muted">
+                    This note is in Trash • Auto-deletes on{' '}
+                    <span className="font-semibold text-[color:var(--text)]">
+                      {autoDeleteDate
+                        ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(autoDeleteDate)
+                        : '30 days from deletion'}
+                    </span>
+                    .
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void restoreNoteFromTrash();
+                      }}
+                      className="h-8 rounded-[var(--rSm)] border border-[color:var(--border)] px-2.5 text-xs font-medium tulis-text transition-colors hover:bg-[color:var(--surface2)]"
+                    >
+                      Restore
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmPermanentDeleteOpen(true)}
+                      className="h-8 rounded-[var(--rSm)] border border-red-500/35 px-2.5 text-xs font-medium text-red-500 transition-colors hover:bg-red-500/10"
+                    >
+                      Permanently delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isTrashEmptyView ? (
+            <div className="mx-auto flex min-h-full max-w-[840px] min-w-0 items-center justify-center text-center">
+              <div>
+                <p className="text-base font-semibold tulis-text">Trash is empty.</p>
+                <p className="mt-2 text-sm tulis-muted">Deleted notes will appear here.</p>
+                <p className="mt-1 text-sm tulis-muted">Notes stay in Trash for 30 days before being permanently removed.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="mx-auto min-h-full max-w-[840px] min-w-0">
+              <EditorContent
+                editor={editor}
+                className="prose prose-lg dark:prose-invert max-w-none focus:outline-none tulis-text"
+              />
+            </div>
+          )}
         </main>
       </div>
+
+      {!isReadOnly && selectionToolbar.visible && (
+        <div
+          className="tulis-selection-toolbar pointer-events-none fixed z-50"
+          style={selectionToolbar.isMobile
+            ? {
+              left: '50%',
+              bottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+              transform: 'translateX(-50%)',
+            }
+            : {
+              left: `${selectionToolbar.left}px`,
+              top: `${selectionToolbar.top}px`,
+              transform: 'translate(-50%, -100%)',
+            }}
+        >
+          <div className={`pointer-events-auto flex items-center gap-1 rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] shadow-md ${selectionToolbar.isMobile ? 'w-[min(92vw,360px)] px-2 py-2' : 'px-1.5 py-1.5'}`}>
+            {selectionToolbarButtons.map((button) => (
+              <button
+                key={button.id}
+                type="button"
+                aria-label={button.ariaLabel}
+                aria-pressed={button.active}
+                disabled={button.disabled}
+                onPointerDown={(event) => {
+                  if (button.disabled) return;
+                  event.preventDefault();
+                  button.onPress();
+                }}
+                onKeyDown={(event) => {
+                  if (button.disabled) return;
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  button.onPress();
+                }}
+                className={`inline-flex items-center justify-center rounded-[var(--rSm)] border text-sm transition-colors ${selectionToolbar.isMobile ? 'h-10 flex-1' : 'h-8 w-8'} ${button.disabled
+                  ? 'cursor-not-allowed border-transparent text-[color:var(--text3)] opacity-55'
+                  : button.active
+                  ? 'border-[color:var(--accent)] bg-[color:var(--surface2)] text-[color:var(--accent)]'
+                  : 'border-transparent tulis-muted hover:border-[color:var(--border)] hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'} ${button.className}`}
+              >
+                {button.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {datePickerOpen && (
         <DatePicker
           onSelect={(date) => {
+            if (isReadOnly) return;
             editor?.chain().focus().setDateChip({ date: date.toISOString() }).run();
             setDatePickerOpen(false);
           }}
           onClose={() => setDatePickerOpen(false)}
         />
+      )}
+
+      {confirmPermanentDeleteOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4">
+          <div className="tulis-surface w-full max-w-[320px] rounded-[var(--rLg)] border tulis-border p-8">
+            <h2 className="mb-2 text-center text-xl font-bold tracking-tight tulis-text">Permanently delete?</h2>
+            <p className="mb-8 text-center text-sm tulis-muted">This action cannot be undone.</p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  void permanentlyDeleteCurrentNote();
+                }}
+                className="w-full rounded-[var(--rMd)] bg-red-500 py-3 text-sm font-semibold text-white transition-colors hover:bg-red-600"
+              >
+                Yes, permanently delete
+              </button>
+              <button
+                onClick={() => setConfirmPermanentDeleteOpen(false)}
+                className="w-full rounded-[var(--rMd)] border border-[color:var(--border)] py-3 text-sm font-semibold tulis-text transition-colors hover:bg-[color:var(--surface2)]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

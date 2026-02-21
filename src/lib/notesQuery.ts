@@ -23,7 +23,11 @@ async function findLatestByOrder({
     const snapshot = await getDocs(q);
     if (snapshot.empty) return null;
 
-    const candidate = snapshot.docs.find((doc) => doc.id !== excludeNoteId);
+    const candidate = snapshot.docs.find((doc) => {
+      if (doc.id === excludeNoteId) return false;
+      const data = doc.data();
+      return data.is_deleted !== true;
+    });
     return candidate ? candidate.id : null;
   } catch {
     return null;
