@@ -28,7 +28,7 @@ export async function createEmptyNoteForUser(userId: string): Promise<string> {
     title: 'Untitled',
     content: '',
     contentJson: { type: 'doc', content: [] },
-    tags: [],
+    labels: [],
     pinned: false,
     isDeleted: false,
     deletedAt: null,

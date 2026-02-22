@@ -18,7 +18,7 @@ import {
 import { signOut } from 'firebase/auth';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { appNoteDoc, appNotesCollection } from '@/lib/firestorePaths';
-import { matchesNoteSearch, normalizeTag, notePreview, parseSearchFilters } from '@/lib/notes';
+import { matchesNoteSearch, normalizeLabel, notePreview, parseSearchFilters } from '@/lib/notes';
 import { createEmptyNoteForUser, ensureUserHasNote } from '@/lib/notesLifecycle';
 
 type NoteListItem = {
@@ -27,7 +27,7 @@ type NoteListItem = {
   content: string;
   updatedAt: Timestamp | null;
   deletedAt: Timestamp | null;
-  tags: string[];
+  labels: string[];
   pinned: boolean;
   isDeleted: boolean;
 };
@@ -47,20 +47,20 @@ const SIDEBAR_VIEW_OPTIONS: Array<{ value: SidebarView; label: string }> = [
   { value: 'pinned', label: 'Pinned' },
 ];
 
-function normalizeTagArray(value: unknown): string[] {
+function normalizeLabelArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
-  const tags: string[] = [];
+  const labels: string[] = [];
 
   value.forEach((item) => {
     if (typeof item !== 'string') return;
-    const normalized = normalizeTag(item);
+    const normalized = normalizeLabel(item);
     if (!normalized || seen.has(normalized)) return;
     seen.add(normalized);
-    if (tags.length < 10) tags.push(normalized);
+    if (labels.length < 10) labels.push(normalized);
   });
 
-  return tags;
+  return labels;
 }
 
 export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSidebarModeChange, onClose }: NotesDrawerProps) {
@@ -69,7 +69,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeView, setActiveView] = useState<SidebarView>('all');
-  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [openRowMenuId, setOpenRowMenuId] = useState<string | null>(null);
   const [confirmDeleteRowId, setConfirmDeleteRowId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -114,7 +114,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
           content: typeof data.content === 'string' ? data.content : '',
           updatedAt: (data.updatedAt as Timestamp | null) || null,
           deletedAt: (data.deletedAt as Timestamp | null) || null,
-          tags: normalizeTagArray(data.tags),
+          labels: normalizeLabelArray(data.labels),
           pinned: Boolean(data.pinned),
           isDeleted: data.isDeleted === true,
         };
@@ -202,7 +202,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
   useEffect(() => {
     setOpenRowMenuId(null);
     setConfirmDeleteRowId(null);
-    setActiveTag(null);
+    setActiveLabel(null);
   }, [sidebarMode]);
 
   const activeNote = useMemo(
@@ -213,17 +213,17 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
   const notesInTrash = useMemo(() => notes.filter((note) => note.isDeleted), [notes]);
   const notesInMainView = useMemo(() => notes.filter((note) => !note.isDeleted), [notes]);
 
-  const allTags = useMemo(() => {
-    const tags = new Set<string>();
+  const allLabels = useMemo(() => {
+    const labels = new Set<string>();
     notesInMainView.forEach((note) => {
-      note.tags.forEach((tag) => tags.add(tag));
+      note.labels.forEach((label) => labels.add(label));
     });
-    return [...tags].sort((a, b) => a.localeCompare(b));
+    return [...labels].sort((a, b) => a.localeCompare(b));
   }, [notesInMainView]);
 
   const filters = useMemo(() => parseSearchFilters(searchQuery), [searchQuery]);
   const effectivePinnedOnly = sidebarMode === 'notes' && (activeView === 'pinned' || filters.pinnedOnly);
-  const effectiveTagFilter = sidebarMode === 'notes' ? (activeTag ?? filters.tagFromQuery) : null;
+  const effectiveLabelFilter = sidebarMode === 'notes' ? (activeLabel ?? filters.labelFromQuery) : null;
   const notePendingDelete = useMemo(() => {
     if (!confirmDeleteRowId) return null;
     return notes.find((note) => note.id === confirmDeleteRowId) ?? null;
@@ -233,10 +233,10 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
     const source = sidebarMode === 'trash' ? notesInTrash : notesInMainView;
     const filtered = source.filter((note) => {
       if (effectivePinnedOnly && !note.pinned) return false;
-      if (effectiveTagFilter && !note.tags.includes(effectiveTagFilter)) return false;
+      if (effectiveLabelFilter && !note.labels.includes(effectiveLabelFilter)) return false;
       return matchesNoteSearch(note, {
         normalizedText: filters.normalizedText,
-        tagFromQuery: null,
+        labelFromQuery: null,
         pinnedOnly: false,
       });
     });
@@ -248,7 +248,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
       const bMillis = b.deletedAt?.toMillis?.() ?? 0;
       return bMillis - aMillis;
     });
-  }, [effectivePinnedOnly, effectiveTagFilter, filters.normalizedText, notesInMainView, notesInTrash, sidebarMode]);
+  }, [effectivePinnedOnly, effectiveLabelFilter, filters.normalizedText, notesInMainView, notesInTrash, sidebarMode]);
 
   const createNote = useCallback(async () => {
     const uid = auth.currentUser?.uid;
@@ -263,7 +263,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
     onSidebarModeChange('notes');
     setOpenRowMenuId(null);
     setConfirmDeleteRowId(null);
-    setActiveTag(null);
+    setActiveLabel(null);
 
     if (!activeNote?.isDeleted) return;
     const uid = auth.currentUser?.uid;
@@ -432,14 +432,14 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
             </div>
             <div className="mt-0.5 flex items-center gap-2">
               <p className="min-w-0 flex-1 truncate text-xs tulis-muted">{notePreview(note.content)}</p>
-              {note.tags.length > 0 && (
+              {note.labels.length > 0 && (
                 <div className="flex items-center gap-1">
-                  {note.tags.slice(0, 2).map((tag) => (
+                  {note.labels.slice(0, 2).map((label) => (
                     <span
-                      key={tag}
+                      key={label}
                       className="rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-1.5 py-0.5 text-[10px] font-medium tulis-muted"
                     >
-                      {tag}
+                      {label}
                     </span>
                   ))}
                 </div>
@@ -662,22 +662,22 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
               <div>
                 <p className="pl-3 text-[11px] font-semibold uppercase tracking-[0.15em] text-[color:var(--text3)]">Labels</p>
                 <div className="mt-1.5 space-y-1.5">
-                  {allTags.length === 0 ? (
+                  {allLabels.length === 0 ? (
                     <p className="pl-4 text-xs tulis-muted">No labels yet</p>
                   ) : (
-                    allTags.map((tag) => (
+                    allLabels.map((label) => (
                       <button
-                        key={tag}
+                        key={label}
                         type="button"
                         onClick={() => {
-                          setActiveTag((current) => current === tag ? null : tag);
+                          setActiveLabel((current) => current === label ? null : label);
                         }}
-                        className={`w-full rounded-[var(--rSm)] py-1.5 pl-4 pr-2 text-left text-xs font-medium transition-colors ${activeTag === tag
+                        className={`w-full rounded-[var(--rSm)] py-1.5 pl-4 pr-2 text-left text-xs font-medium transition-colors ${activeLabel === label
                           ? 'bg-[color:var(--surface2)] text-[color:var(--text)]'
                           : 'tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
                           }`}
                       >
-                        {tag}
+                        {label}
                       </button>
                     ))
                   )}

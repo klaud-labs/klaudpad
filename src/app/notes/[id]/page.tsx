@@ -19,7 +19,7 @@ import { DateChip } from '@/editor/DateChip';
 import { CodeBlock } from '@/editor/CodeBlock';
 import { DatePicker } from '@/components/editor/DatePicker';
 import { offOpenDatePicker, onOpenDatePicker } from '@/lib/editor/datePickerEvent';
-import { normalizeTag, normalizeTags } from '@/lib/notes';
+import { normalizeLabel, normalizeLabels } from '@/lib/notes';
 import { ensureUserHasNote } from '@/lib/notesLifecycle';
 
 type SyncStatus = 'loading' | 'syncing' | 'synced' | 'error';
@@ -96,9 +96,9 @@ export default function NotePage() {
   const { user, loading: authLoading } = useAuthGuard();
   const noteId = typeof routeParams?.id === 'string' ? routeParams.id : null;
   const [title, setTitle] = useState('');
-  const [tags, setTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState('');
-  const [allUserTags, setAllUserTags] = useState<string[]>([]);
+  const [labels, setLabels] = useState<string[]>([]);
+  const [labelInput, setLabelInput] = useState('');
+  const [allUserLabels, setAllUserLabels] = useState<string[]>([]);
   const [hasTrashNotes, setHasTrashNotes] = useState(false);
   const [hasLoadedUserNotes, setHasLoadedUserNotes] = useState(false);
   const [pinned, setPinned] = useState(false);
@@ -109,7 +109,7 @@ export default function NotePage() {
     if (typeof window === 'undefined') return true;
     return !window.matchMedia('(max-width: 767px)').matches;
   });
-  const [isTagPopoverOpen, setIsTagPopoverOpen] = useState(false);
+  const [isLabelPopoverOpen, setIsLabelPopoverOpen] = useState(false);
   const [isHeaderActionsMenuOpen, setIsHeaderActionsMenuOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('loading');
@@ -129,8 +129,8 @@ export default function NotePage() {
   const contentSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
-  const tagInputRef = useRef<HTMLInputElement | null>(null);
-  const tagPopoverRef = useRef<HTMLDivElement | null>(null);
+  const labelInputRef = useRef<HTMLInputElement | null>(null);
+  const labelPopoverRef = useRef<HTMLDivElement | null>(null);
   const editorScrollRef = useRef<HTMLElement | null>(null);
   const lastSelectionRangeRef = useRef<{ from: number; to: number } | null>(null);
   const selectionGestureActiveRef = useRef(false);
@@ -224,7 +224,7 @@ export default function NotePage() {
 
   useEffect(() => {
     if (!user) {
-      setAllUserTags([]);
+      setAllUserLabels([]);
       setHasTrashNotes(false);
       setHasLoadedUserNotes(false);
       return;
@@ -232,16 +232,16 @@ export default function NotePage() {
 
     const byOwnerUid = query(appNotesCollection(db), where('ownerUid', '==', user.uid));
 
-    const collectTags = (docs: Array<{ data: () => Record<string, unknown> }>) => {
+    const collectLabels = (docs: Array<{ data: () => Record<string, unknown> }>) => {
       const deduped = new Set<string>();
 
       docs.forEach((snapshotDoc) => {
         const data = snapshotDoc.data();
         if (data.isDeleted === true) return;
-        if (!Array.isArray(data.tags)) return;
-        data.tags.forEach((tag) => {
+        if (!Array.isArray(data.labels)) return;
+        data.labels.forEach((tag) => {
           if (typeof tag !== 'string') return;
-          const normalized = normalizeTag(tag);
+          const normalized = normalizeLabel(tag);
           if (normalized) deduped.add(normalized);
         });
       });
@@ -252,7 +252,7 @@ export default function NotePage() {
     let ownerUidDocs: Array<{ data: () => Record<string, unknown> }> = [];
 
     const sync = () => {
-      setAllUserTags(collectTags(ownerUidDocs));
+      setAllUserLabels(collectLabels(ownerUidDocs));
       setHasTrashNotes(ownerUidDocs.some((snapshotDoc) => snapshotDoc.data().isDeleted === true));
       setHasLoadedUserNotes(true);
     };
@@ -262,10 +262,10 @@ export default function NotePage() {
       sync();
     }, (error) => {
       if (error.code === 'permission-denied') {
-        console.warn('Tag sync permission denied for ownerUid query.');
+        console.warn('Label sync permission denied for ownerUid query.');
         return;
       }
-      console.error('Tag sync error (ownerUid):', error);
+      console.error('Label sync error (ownerUid):', error);
       setHasLoadedUserNotes(true);
     });
 
@@ -293,7 +293,7 @@ export default function NotePage() {
       if (deleted) {
         setSidebarMode('trash');
         setIsHeaderActionsMenuOpen(false);
-        setIsTagPopoverOpen(false);
+        setIsLabelPopoverOpen(false);
       }
       try {
         window.localStorage.setItem(`tulis:lastNoteId:${user.uid}`, noteId);
@@ -301,10 +301,10 @@ export default function NotePage() {
         // Ignore localStorage write failures.
       }
 
-      const incomingTags = Array.isArray(data.tags)
-        ? normalizeTags(data.tags.filter((value): value is string => typeof value === 'string'))
+      const incomingLabels = Array.isArray(data.labels)
+        ? normalizeLabels(data.labels.filter((value): value is string => typeof value === 'string'))
         : [];
-      setTags(incomingTags);
+      setLabels(incomingLabels);
 
       const newContent = data.contentJson || { type: 'doc', content: [] };
       const currentContent = editor.getJSON();
@@ -347,7 +347,7 @@ export default function NotePage() {
     editor.setEditable(!isReadOnly);
     if (isReadOnly) {
       setIsHeaderActionsMenuOpen(false);
-      setIsTagPopoverOpen(false);
+      setIsLabelPopoverOpen(false);
       setDatePickerOpen(false);
       setSelectionToolbar((current) => (current.visible ? { ...current, visible: false } : current));
     }
@@ -394,19 +394,19 @@ export default function NotePage() {
     }
   }, [isReadOnly, noteId, user, markSaved]);
 
-  const saveTagsNow = useCallback(async (nextTags: string[]) => {
+  const saveLabelsNow = useCallback(async (nextLabels: string[]) => {
     if (!noteId || !user || isReadOnly) return;
 
-    const normalized = normalizeTags(nextTags);
-    setTags(normalized);
+    const normalized = normalizeLabels(nextLabels);
+    setLabels(normalized);
 
     try {
       await updateDoc(appNoteDoc(db, noteId), {
-        tags: normalized,
+        labels: normalized,
         updatedAt: serverTimestamp(),
       });
     } catch (error) {
-      console.error('Failed to save tags:', error);
+      console.error('Failed to save labels:', error);
       setSyncStatus('error');
     }
   }, [isReadOnly, noteId, user]);
@@ -433,7 +433,7 @@ export default function NotePage() {
     if (!noteId || !user || isReadOnly) return;
 
     setIsHeaderActionsMenuOpen(false);
-    setIsTagPopoverOpen(false);
+    setIsLabelPopoverOpen(false);
 
     try {
       await updateDoc(appNoteDoc(db, noteId), {
@@ -458,7 +458,7 @@ export default function NotePage() {
     }
 
     setIsHeaderActionsMenuOpen(false);
-    setIsTagPopoverOpen(false);
+    setIsLabelPopoverOpen(false);
     editor.commands.setContent(nextDoc, { emitUpdate: true });
     editor.commands.focus();
   }, [editor, isReadOnly]);
@@ -572,45 +572,45 @@ export default function NotePage() {
     }, 600);
   }, [saveTitleNow]);
 
-  const openTagPopover = useCallback(() => {
+  const openLabelPopover = useCallback(() => {
     if (isReadOnly) return;
     setIsHeaderActionsMenuOpen(false);
-    setIsTagPopoverOpen(true);
+    setIsLabelPopoverOpen(true);
     window.requestAnimationFrame(() => {
-      tagInputRef.current?.focus();
+      labelInputRef.current?.focus();
     });
   }, [isReadOnly]);
 
-  const tagSuggestions = useMemo(() => {
-    const normalizedInput = normalizeTag(tagInput) || tagInput.trim().toLowerCase();
-    const availableTags = allUserTags.filter((tag) => !tags.includes(tag));
-    if (!normalizedInput) return availableTags.slice(0, 8);
+  const labelSuggestions = useMemo(() => {
+    const normalizedInput = normalizeLabel(labelInput) || labelInput.trim().toLowerCase();
+    const availableLabels = allUserLabels.filter((label) => !labels.includes(label));
+    if (!normalizedInput) return availableLabels.slice(0, 8);
 
-    return availableTags
-      .filter((tag) => tag.includes(normalizedInput))
+    return availableLabels
+      .filter((label) => label.includes(normalizedInput))
       .slice(0, 8);
-  }, [allUserTags, tagInput, tags]);
+  }, [allUserLabels, labelInput, labels]);
 
-  const addTagFromInput = useCallback(() => {
-    const normalized = normalizeTag(tagInput);
+  const addLabelFromInput = useCallback(() => {
+    const normalized = normalizeLabel(labelInput);
     if (!normalized) {
-      setTagInput('');
+      setLabelInput('');
       return;
     }
 
-    if (tags.includes(normalized)) {
-      setTagInput('');
+    if (labels.includes(normalized)) {
+      setLabelInput('');
       return;
     }
 
-    if (tags.length >= 10) {
-      setTagInput('');
+    if (labels.length >= 10) {
+      setLabelInput('');
       return;
     }
 
-    setTagInput('');
-    void saveTagsNow([...tags, normalized]);
-  }, [tagInput, tags, saveTagsNow]);
+    setLabelInput('');
+    void saveLabelsNow([...labels, normalized]);
+  }, [labelInput, labels, saveLabelsNow]);
 
   const hideSelectionToolbar = useCallback(() => {
     setSelectionToolbar((current) => (current.visible ? { ...current, visible: false } : current));
@@ -841,30 +841,30 @@ export default function NotePage() {
       if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
       if (event.key.toLowerCase() !== 't') return;
       event.preventDefault();
-      openTagPopover();
+      openLabelPopover();
     };
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [isReadOnly, openTagPopover]);
+  }, [isReadOnly, openLabelPopover]);
 
   useEffect(() => {
-    if (!isTagPopoverOpen && !isHeaderActionsMenuOpen) return;
+    if (!isLabelPopoverOpen && !isHeaderActionsMenuOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (!target) return;
-      if (tagPopoverRef.current?.contains(target)) return;
+      if (labelPopoverRef.current?.contains(target)) return;
       setIsHeaderActionsMenuOpen(false);
-      setIsTagPopoverOpen(false);
-      setTagInput('');
+      setIsLabelPopoverOpen(false);
+      setLabelInput('');
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       setIsHeaderActionsMenuOpen(false);
-      setIsTagPopoverOpen(false);
-      setTagInput('');
+      setIsLabelPopoverOpen(false);
+      setLabelInput('');
     };
 
     window.addEventListener('mousedown', handlePointerDown);
@@ -873,7 +873,7 @@ export default function NotePage() {
       window.removeEventListener('mousedown', handlePointerDown);
       window.removeEventListener('keydown', handleEscape);
     };
-  }, [isHeaderActionsMenuOpen, isTagPopoverOpen]);
+  }, [isHeaderActionsMenuOpen, isLabelPopoverOpen]);
 
   useEffect(() => {
     if (!editor) return;
@@ -1070,7 +1070,7 @@ export default function NotePage() {
     };
   }, [noteId, ready, shouldFocusTitle]);
 
-  const hasTags = tags.length > 0;
+  const hasLabels = labels.length > 0;
   const displayTitle = isTrashEmptyView ? '' : title;
   const titlePlaceholder = isTrashEmptyView ? '' : 'Untitled';
   const autoDeleteDate = useMemo(() => {
@@ -1303,7 +1303,7 @@ export default function NotePage() {
                     </svg>
                   </button>
 
-                  <div className="relative" ref={tagPopoverRef}>
+                  <div className="relative" ref={labelPopoverRef}>
                     <button
                       type="button"
                       onClick={() => {
@@ -1311,11 +1311,11 @@ export default function NotePage() {
                           setIsHeaderActionsMenuOpen(false);
                           return;
                         }
-                        setIsTagPopoverOpen(false);
-                        setTagInput('');
+                        setIsLabelPopoverOpen(false);
+                        setLabelInput('');
                         setIsHeaderActionsMenuOpen(true);
                       }}
-                      className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${isHeaderActionsMenuOpen || isTagPopoverOpen
+                      className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${isHeaderActionsMenuOpen || isLabelPopoverOpen
                         ? 'border-[color:var(--border)] text-[color:var(--text)] bg-[color:var(--surface2)]'
                         : 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
                         }`}
@@ -1336,14 +1336,14 @@ export default function NotePage() {
                         <button
                           type="button"
                           onClick={() => {
-                            openTagPopover();
+                            openLabelPopover();
                           }}
                           className="flex w-full items-center justify-between rounded-[calc(var(--rSm)-2px)] px-2.5 py-2 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]"
                         >
                           <span>Manage labels</span>
-                          {hasTags ? (
+                          {hasLabels ? (
                             <span className="rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-1.5 py-0.5 text-[10px] font-semibold text-[color:var(--text)]">
-                              {tags.length}
+                              {labels.length}
                             </span>
                           ) : null}
                         </button>
@@ -1376,15 +1376,15 @@ export default function NotePage() {
                       </div>
                     )}
 
-                    {isTagPopoverOpen && (
+                    {isLabelPopoverOpen && (
                       <div className="absolute right-0 top-10 z-50 w-[300px] max-w-[calc(100vw-1rem)] rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] p-3 shadow-sm">
                         <div className="mb-2 flex items-center justify-between">
                           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] tulis-muted">Labels</p>
-                          {hasTags && (
+                          {hasLabels && (
                             <button
                               type="button"
                               onClick={() => {
-                                void saveTagsNow([]);
+                                void saveLabelsNow([]);
                               }}
                               className="text-[10px] font-medium uppercase tracking-[0.08em] tulis-muted transition-colors hover:text-[color:var(--text)]"
                             >
@@ -1393,9 +1393,9 @@ export default function NotePage() {
                           )}
                         </div>
 
-                        {hasTags && (
+                        {hasLabels && (
                           <div className="mb-2 flex flex-wrap gap-1.5">
-                            {tags.map((tag) => (
+                            {labels.map((tag) => (
                               <span
                                 key={tag}
                                 className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-2 py-1 text-xs font-medium tulis-text"
@@ -1404,7 +1404,7 @@ export default function NotePage() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    void saveTagsNow(tags.filter((item) => item !== tag));
+                                    void saveLabelsNow(labels.filter((item) => item !== tag));
                                   }}
                                   className="rounded-full p-0.5 tulis-muted transition-colors hover:text-[color:var(--text)]"
                                   aria-label={`Remove ${tag} label`}
@@ -1422,30 +1422,30 @@ export default function NotePage() {
                         <form
                           onSubmit={(event) => {
                             event.preventDefault();
-                            addTagFromInput();
+                            addLabelFromInput();
                           }}
                         >
                           <input
-                            ref={tagInputRef}
-                            value={tagInput}
-                            onChange={(event) => setTagInput(event.target.value)}
+                            ref={labelInputRef}
+                            value={labelInput}
+                            onChange={(event) => setLabelInput(event.target.value)}
                             onKeyDown={(event) => {
                               if ((event.key === 'Enter' || event.key === ',') && !event.nativeEvent.isComposing) {
                                 event.preventDefault();
-                                addTagFromInput();
+                                addLabelFromInput();
                               }
                               if (event.key === 'Escape') {
                                 event.preventDefault();
-                                setIsTagPopoverOpen(false);
-                                setTagInput('');
+                                setIsLabelPopoverOpen(false);
+                                setLabelInput('');
                               }
-                              if (event.key === 'Backspace' && !tagInput.trim() && tags.length > 0) {
+                              if (event.key === 'Backspace' && !labelInput.trim() && labels.length > 0) {
                                 event.preventDefault();
-                                void saveTagsNow(tags.slice(0, -1));
+                                void saveLabelsNow(labels.slice(0, -1));
                               }
                             }}
-                            placeholder={tags.length >= 10 ? 'Label limit reached' : 'Press enter to add label'}
-                            disabled={tags.length >= 10}
+                            placeholder={labels.length >= 10 ? 'Label limit reached' : 'Press enter to add label'}
+                            disabled={labels.length >= 10}
                             enterKeyHint="done"
                             autoCapitalize="none"
                             autoCorrect="off"
@@ -1456,16 +1456,16 @@ export default function NotePage() {
                           </button>
                         </form>
 
-                        {tagSuggestions.length > 0 && (
+                        {labelSuggestions.length > 0 && (
                           <div className="mt-2 max-h-28 overflow-y-auto rounded-[var(--rSm)] border border-[color:var(--border2)] bg-[color:var(--surface2)] p-1">
-                            {tagSuggestions.map((tag) => (
+                            {labelSuggestions.map((tag) => (
                               <button
                                 key={tag}
                                 type="button"
                                 onClick={() => {
-                                  if (tags.includes(tag) || tags.length >= 10) return;
-                                  void saveTagsNow([...tags, tag]);
-                                  setTagInput('');
+                                  if (labels.includes(tag) || labels.length >= 10) return;
+                                  void saveLabelsNow([...labels, tag]);
+                                  setLabelInput('');
                                 }}
                                 className="w-full rounded-[var(--rSm)] px-2 py-1 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface)] hover:text-[color:var(--text)]"
                               >
