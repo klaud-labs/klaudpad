@@ -14,7 +14,12 @@ export type SearchableNote = {
 };
 
 export const normalizeTag = (value: string): string | null => {
-  const trimmed = value.trim().toLowerCase().replace(/^#+/, '').replace(/\//g, '-');
+  const trimmed = value
+    .trim()
+    .toLowerCase()
+    .replace(/^#+/, '')
+    .replace(/[\s/]+/g, '-')
+    .replace(/-+/g, '-');
   if (!trimmed) return null;
   if (trimmed.length > 24) return null;
   if (!TAG_PATTERN.test(trimmed)) return null;

@@ -98,9 +98,6 @@ textarea:disabled {
 
 button:focus-visible,
 a[href]:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible,
 [role='button']:focus-visible,
 [role='tab']:focus-visible,
 summary:focus-visible {
@@ -125,6 +122,16 @@ textarea:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: none !important;
+}
+
+input[type='text']:focus-visible,
+input[type='email']:focus-visible,
+input[type='password']:focus-visible,
+input[type='search']:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none !important;
+  outline-offset: 0;
 }
 
 .tulis-bg {
