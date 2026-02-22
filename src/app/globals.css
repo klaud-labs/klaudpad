@@ -29,6 +29,9 @@
   --codeGutterBg: #e9eef5;
   --codeBorder: rgba(15, 23, 42, 0.12);
   --codeText: rgba(15, 23, 42, 0.9);
+  --inlineCodeBg: #e9f0ff;
+  --inlineCodeBorder: rgba(79, 70, 229, 0.18);
+  --inlineCodeText: rgba(15, 23, 42, 0.96);
 }
 
 :root[data-theme='dark'] {
@@ -45,6 +48,9 @@
   --codeGutterBg: #0d131d;
   --codeBorder: rgba(255, 255, 255, 0.08);
   --codeText: rgba(255, 255, 255, 0.9);
+  --inlineCodeBg: #1a2338;
+  --inlineCodeBorder: rgba(129, 140, 248, 0.28);
+  --inlineCodeText: rgba(238, 242, 255, 0.95);
 }
 
 /* App semantic aliases used across components */
@@ -573,13 +579,15 @@ select:focus-visible {
   color: var(--text2);
 }
 
-.ProseMirror code,
-.prose .ProseMirror code {
+.ProseMirror :not(pre) > code,
+.prose .ProseMirror :not(pre) > code {
   font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.9em;
-  background: var(--surface2);
+  color: var(--inlineCodeText);
+  background: var(--inlineCodeBg);
+  border: 1px solid var(--inlineCodeBorder);
   border-radius: 0.35rem;
-  padding: 0.12em 0.35em;
+  padding: 0.12em 0.38em;
 }
 
 .ProseMirror [data-tag-chip] {

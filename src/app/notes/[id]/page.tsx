@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent as ReactTouchEvent } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { NotesDrawer } from '@/components/notes/NotesDrawer';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
@@ -31,6 +31,64 @@ type SelectionToolbarState = {
 };
 type SidebarMode = 'notes' | 'trash';
 
+function stripCompletedTasksFromNode(node: JSONContent): { node: JSONContent | null; removedCount: number } {
+  let removedCount = 0;
+  const children = Array.isArray(node.content) ? node.content : null;
+
+  if (!children) {
+    return { node, removedCount };
+  }
+
+  const nextChildren: JSONContent[] = [];
+  let changed = false;
+
+  for (const child of children) {
+    if (child.type === 'taskItem' && child.attrs?.checked === true) {
+      removedCount += 1;
+      changed = true;
+      continue;
+    }
+
+    const result = stripCompletedTasksFromNode(child);
+    removedCount += result.removedCount;
+
+    if (!result.node) {
+      changed = true;
+      continue;
+    }
+
+    if (result.node !== child) {
+      changed = true;
+    }
+
+    nextChildren.push(result.node);
+  }
+
+  if (node.type === 'taskList' && nextChildren.length === 0) {
+    return { node: null, removedCount };
+  }
+
+  if (!changed) {
+    return { node, removedCount };
+  }
+
+  return {
+    node: {
+      ...node,
+      content: nextChildren,
+    },
+    removedCount,
+  };
+}
+
+function stripCompletedTasksFromDoc(doc: JSONContent): { doc: JSONContent; removedCount: number } {
+  const result = stripCompletedTasksFromNode(doc);
+  if (!result.node || result.node.type !== 'doc') {
+    return { doc: { type: 'doc', content: [] }, removedCount: result.removedCount };
+  }
+  return { doc: result.node, removedCount: result.removedCount };
+}
+
 export default function NotePage() {
   const router = useRouter();
   const routeParams = useParams<{ id: string }>();
@@ -52,6 +110,7 @@ export default function NotePage() {
     return !window.matchMedia('(max-width: 767px)').matches;
   });
   const [isTagPopoverOpen, setIsTagPopoverOpen] = useState(false);
+  const [isHeaderActionsMenuOpen, setIsHeaderActionsMenuOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('loading');
   const [isTitleFocused, setIsTitleFocused] = useState(false);
@@ -75,6 +134,12 @@ export default function NotePage() {
   const editorScrollRef = useRef<HTMLElement | null>(null);
   const lastSelectionRangeRef = useRef<{ from: number; to: number } | null>(null);
   const selectionGestureActiveRef = useRef(false);
+  const mobileSidebarSwipeRef = useRef({
+    tracking: false,
+    opened: false,
+    startX: 0,
+    startY: 0,
+  });
   const focusedTitleForNoteRef = useRef<string | null>(null);
   const recoveringNoteRef = useRef(false);
   const trashCleanupRunningRef = useRef(false);
@@ -93,6 +158,7 @@ export default function NotePage() {
     changeVersionRef.current = 0;
     savedVersionRef.current = 0;
     setConfirmPermanentDeleteOpen(false);
+    setIsHeaderActionsMenuOpen(false);
   }, [noteId]);
 
   const markDirty = useCallback(() => {
@@ -226,6 +292,7 @@ export default function NotePage() {
       setDeletedAt((data.deleted_at as Timestamp | null) || null);
       if (deleted) {
         setSidebarMode('trash');
+        setIsHeaderActionsMenuOpen(false);
         setIsTagPopoverOpen(false);
       }
       try {
@@ -279,6 +346,7 @@ export default function NotePage() {
     if (!editor) return;
     editor.setEditable(!isReadOnly);
     if (isReadOnly) {
+      setIsHeaderActionsMenuOpen(false);
       setIsTagPopoverOpen(false);
       setDatePickerOpen(false);
       setSelectionToolbar((current) => (current.visible ? { ...current, visible: false } : current));
@@ -364,6 +432,41 @@ export default function NotePage() {
       setPinned(!nextPinned);
     }
   }, [isReadOnly, noteId, user, pinned]);
+
+  const moveCurrentNoteToTrash = useCallback(async () => {
+    if (!noteId || !user || isReadOnly) return;
+
+    setIsHeaderActionsMenuOpen(false);
+    setIsTagPopoverOpen(false);
+
+    try {
+      await updateDoc(appNoteDoc(db, noteId), {
+        is_deleted: true,
+        deleted_at: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        updated_at: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error('Failed to move note to trash:', error);
+      setSyncStatus('error');
+    }
+  }, [isReadOnly, noteId, user]);
+
+  const clearCompletedTasks = useCallback(() => {
+    if (!editor || isReadOnly) return;
+
+    const currentDoc = editor.getJSON();
+    const { doc: nextDoc, removedCount } = stripCompletedTasksFromDoc(currentDoc);
+    if (removedCount === 0) {
+      setIsHeaderActionsMenuOpen(false);
+      return;
+    }
+
+    setIsHeaderActionsMenuOpen(false);
+    setIsTagPopoverOpen(false);
+    editor.commands.setContent(nextDoc, { emitUpdate: true });
+    editor.commands.focus();
+  }, [editor, isReadOnly]);
 
   const restoreNoteFromTrash = useCallback(async () => {
     if (!noteId || !user || !isDeleted) return;
@@ -477,6 +580,7 @@ export default function NotePage() {
 
   const openTagPopover = useCallback(() => {
     if (isReadOnly) return;
+    setIsHeaderActionsMenuOpen(false);
     setIsTagPopoverOpen(true);
     window.requestAnimationFrame(() => {
       tagInputRef.current?.focus();
@@ -580,7 +684,7 @@ export default function NotePage() {
     }
   }, [editor, hideSelectionToolbar, isMobileSelectionViewport, isReadOnly]);
 
-  const runSelectionMarkToggle = useCallback((mark: 'bold' | 'italic' | 'underline' | 'strike') => {
+  const runSelectionMarkToggle = useCallback((mark: 'bold' | 'italic' | 'underline' | 'strike' | 'code') => {
     if (!editor || isReadOnly) return;
 
     const chain = editor.chain().focus();
@@ -592,6 +696,7 @@ export default function NotePage() {
     if (mark === 'italic') chain.toggleItalic();
     if (mark === 'underline') chain.toggleUnderline();
     if (mark === 'strike') chain.toggleStrike();
+    if (mark === 'code') chain.toggleCode();
     chain.run();
 
     window.requestAnimationFrame(() => updateSelectionToolbar(editor));
@@ -622,6 +727,58 @@ export default function NotePage() {
 
     return canChain.run();
   }, [editor, getSelectionAnchor, isReadOnly]);
+
+  const resetMobileSidebarSwipe = useCallback(() => {
+    mobileSidebarSwipeRef.current.tracking = false;
+    mobileSidebarSwipeRef.current.opened = false;
+  }, []);
+
+  const handleMobileSidebarSwipeStart = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
+    resetMobileSidebarSwipe();
+
+    if (isSidebarOpen) return;
+    if (event.touches.length !== 1) return;
+    if (typeof window === 'undefined' || !window.matchMedia('(max-width: 767px)').matches) return;
+
+    const touch = event.touches[0];
+    if (touch.clientX > 28) return;
+
+    mobileSidebarSwipeRef.current.tracking = true;
+    mobileSidebarSwipeRef.current.startX = touch.clientX;
+    mobileSidebarSwipeRef.current.startY = touch.clientY;
+  }, [isSidebarOpen, resetMobileSidebarSwipe]);
+
+  const handleMobileSidebarSwipeMove = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
+    const swipe = mobileSidebarSwipeRef.current;
+    if (!swipe.tracking || swipe.opened) return;
+    if (event.touches.length !== 1) {
+      resetMobileSidebarSwipe();
+      return;
+    }
+
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - swipe.startX;
+    const deltaY = touch.clientY - swipe.startY;
+
+    if (deltaX < -8) {
+      resetMobileSidebarSwipe();
+      return;
+    }
+
+    if (Math.abs(deltaY) > 56 && Math.abs(deltaY) > Math.abs(deltaX)) {
+      resetMobileSidebarSwipe();
+      return;
+    }
+
+    if (deltaX >= 72 && deltaX > Math.abs(deltaY) * 1.25) {
+      swipe.opened = true;
+      setIsSidebarOpen(true);
+    }
+  }, [resetMobileSidebarSwipe]);
+
+  const handleMobileSidebarSwipeEnd = useCallback(() => {
+    resetMobileSidebarSwipe();
+  }, [resetMobileSidebarSwipe]);
 
   const runSelectionListShift = useCallback((direction: 'left' | 'right') => {
     if (!editor || isReadOnly) return;
@@ -698,18 +855,20 @@ export default function NotePage() {
   }, [isReadOnly, openTagPopover]);
 
   useEffect(() => {
-    if (!isTagPopoverOpen) return;
+    if (!isTagPopoverOpen && !isHeaderActionsMenuOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (!target) return;
       if (tagPopoverRef.current?.contains(target)) return;
+      setIsHeaderActionsMenuOpen(false);
       setIsTagPopoverOpen(false);
       setTagInput('');
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      setIsHeaderActionsMenuOpen(false);
       setIsTagPopoverOpen(false);
       setTagInput('');
     };
@@ -720,7 +879,7 @@ export default function NotePage() {
       window.removeEventListener('mousedown', handlePointerDown);
       window.removeEventListener('keydown', handleEscape);
     };
-  }, [isTagPopoverOpen]);
+  }, [isHeaderActionsMenuOpen, isTagPopoverOpen]);
 
   useEffect(() => {
     if (!editor) return;
@@ -927,6 +1086,8 @@ export default function NotePage() {
   }, [deletedAt]);
   const canTabLeft = canShiftListItem('left', 'taskItem') || canShiftListItem('left', 'listItem');
   const canTabRight = canShiftListItem('right', 'taskItem') || canShiftListItem('right', 'listItem');
+  const canUndo = !isReadOnly && (editor?.can().chain().undo().run() ?? false);
+  const canRedo = !isReadOnly && (editor?.can().chain().redo().run() ?? false);
   const selectionToolbarButtons = [
     {
       id: 'tab-left',
@@ -982,6 +1143,15 @@ export default function NotePage() {
       onPress: () => runSelectionMarkToggle('strike'),
       className: 'line-through decoration-2',
     },
+    {
+      id: 'inline-code',
+      label: '</>',
+      ariaLabel: 'Toggle inline code',
+      active: editor?.isActive('code') ?? false,
+      disabled: false,
+      onPress: () => runSelectionMarkToggle('code'),
+      className: 'font-mono text-[11px] tracking-tight',
+    },
   ];
 
   if (!noteId || (authLoading && !user)) {
@@ -989,7 +1159,13 @@ export default function NotePage() {
   }
 
   return (
-    <div className="flex h-screen w-full overflow-hidden tulis-bg font-sans selection:bg-[color:var(--focusRing)]">
+    <div
+      className="flex h-screen w-full overflow-hidden tulis-bg font-sans selection:bg-[color:var(--focusRing)]"
+      onTouchStart={handleMobileSidebarSwipeStart}
+      onTouchMove={handleMobileSidebarSwipeMove}
+      onTouchEnd={handleMobileSidebarSwipeEnd}
+      onTouchCancel={handleMobileSidebarSwipeEnd}
+    >
       <NotesDrawer
         isSidebarOpen={isSidebarOpen}
         currentNoteId={noteId ?? ''}
@@ -1055,37 +1231,159 @@ export default function NotePage() {
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
+              {!isReadOnly && ready && (
+                <span className={`inline-flex w-[6.25rem] shrink-0 items-center justify-end gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${syncStatus === 'error' ? 'text-red-500' : 'tulis-muted'}`}>
+                  {syncStatus === 'loading'
+                    ? 'Loading'
+                    : syncStatus === 'syncing'
+                      ? 'Syncing'
+                      : syncStatus === 'error'
+                        ? 'Failed'
+                        : 'Synced'}
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${syncStatus === 'syncing'
+                      ? 'bg-[color:var(--accent)]'
+                      : syncStatus === 'loading'
+                        ? 'bg-[color:var(--text3)]'
+                      : syncStatus === 'error'
+                        ? 'bg-red-500'
+                        : 'bg-[color:var(--text2)]'
+                      }`}
+                  />
+                </span>
+              )}
+
               {!isReadOnly && (
                 <>
+                  <button
+                    type="button"
+                    onPointerDown={(event) => {
+                      if (!canUndo) return;
+                      event.preventDefault();
+                      editor?.chain().focus().undo().run();
+                    }}
+                    onKeyDown={(event) => {
+                      if (!canUndo) return;
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      editor?.chain().focus().undo().run();
+                    }}
+                    disabled={!canUndo}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${canUndo
+                      ? 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
+                      : 'cursor-not-allowed border-[color:var(--border2)] text-[color:var(--text3)] opacity-55'}`}
+                    aria-label="Undo"
+                    title="Undo"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" aria-hidden="true">
+                      <path d="M9 14 4 9l5-5" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M4 9h11a4 4 0 1 1 0 8h-1" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+
+                  <button
+                    type="button"
+                    onPointerDown={(event) => {
+                      if (!canRedo) return;
+                      event.preventDefault();
+                      editor?.chain().focus().redo().run();
+                    }}
+                    onKeyDown={(event) => {
+                      if (!canRedo) return;
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      editor?.chain().focus().redo().run();
+                    }}
+                    disabled={!canRedo}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${canRedo
+                      ? 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
+                      : 'cursor-not-allowed border-[color:var(--border2)] text-[color:var(--text3)] opacity-55'}`}
+                    aria-label="Redo"
+                    title="Redo"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" aria-hidden="true">
+                      <path d="m15 14 5-5-5-5" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M20 9H9a4 4 0 1 0 0 8h1" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+
                   <div className="relative" ref={tagPopoverRef}>
                     <button
                       type="button"
                       onClick={() => {
-                        if (isTagPopoverOpen) {
-                          setIsTagPopoverOpen(false);
-                          setTagInput('');
+                        if (isHeaderActionsMenuOpen) {
+                          setIsHeaderActionsMenuOpen(false);
                           return;
                         }
-                        openTagPopover();
+                        setIsTagPopoverOpen(false);
+                        setTagInput('');
+                        setIsHeaderActionsMenuOpen(true);
                       }}
-                      className={`inline-flex h-8 rounded-[var(--rSm)] border text-[10px] font-semibold uppercase tracking-[0.1em] transition-colors ${hasTags ? 'items-center gap-1 px-2' : 'w-8 items-center justify-center px-0'} ${isTagPopoverOpen
+                      className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${isHeaderActionsMenuOpen || isTagPopoverOpen
                         ? 'border-[color:var(--accent)] text-[color:var(--accent)] bg-[color:var(--surface2)]'
                         : 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
                         }`}
-                      aria-label="Manage tags"
-                      title="Manage tags"
+                      aria-haspopup="menu"
+                      aria-expanded={isHeaderActionsMenuOpen}
+                      aria-label="Open note actions"
+                      title="Note actions"
                     >
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="m20 13-7 7H4v-9l7-7 9 9Z" strokeLinecap="round" strokeLinejoin="round" />
-                        <circle cx="7.5" cy="7.5" r="1.5" />
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <circle cx="12" cy="5" r="1.8" />
+                        <circle cx="12" cy="12" r="1.8" />
+                        <circle cx="12" cy="19" r="1.8" />
                       </svg>
-                      {hasTags ? `${tags.length}` : null}
                     </button>
+
+                    {isHeaderActionsMenuOpen && (
+                      <div className="absolute right-0 top-10 z-50 min-w-[196px] rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] p-1.5 shadow-sm">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            openTagPopover();
+                          }}
+                          className="flex w-full items-center justify-between rounded-[calc(var(--rSm)-2px)] px-2.5 py-2 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]"
+                        >
+                          <span>Manage labels</span>
+                          {hasTags ? (
+                            <span className="rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-1.5 py-0.5 text-[10px] font-semibold text-[color:var(--text)]">
+                              {tags.length}
+                            </span>
+                          ) : null}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsHeaderActionsMenuOpen(false);
+                            void togglePinned();
+                          }}
+                          className="mt-0.5 flex w-full items-center rounded-[calc(var(--rSm)-2px)] px-2.5 py-2 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]"
+                        >
+                          {pinned ? 'Unpin note' : 'Pin note'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearCompletedTasks}
+                          className="mt-0.5 flex w-full items-center rounded-[calc(var(--rSm)-2px)] px-2.5 py-2 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]"
+                        >
+                          Clear completed tasks
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void moveCurrentNoteToTrash();
+                          }}
+                          className="mt-0.5 flex w-full items-center rounded-[calc(var(--rSm)-2px)] px-2.5 py-2 text-left text-xs text-red-500 transition-colors hover:bg-[color:var(--surface2)]"
+                        >
+                          Move to Trash
+                        </button>
+                      </div>
+                    )}
 
                     {isTagPopoverOpen && (
                       <div className="absolute right-0 top-10 z-50 w-[300px] max-w-[calc(100vw-1rem)] rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] p-3 shadow-sm">
                         <div className="mb-2 flex items-center justify-between">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] tulis-muted">Tags</p>
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] tulis-muted">Labels</p>
                           {hasTags && (
                             <button
                               type="button"
@@ -1113,7 +1411,7 @@ export default function NotePage() {
                                     void saveTagsNow(tags.filter((item) => item !== tag));
                                   }}
                                   className="rounded-full p-0.5 tulis-muted transition-colors hover:text-[color:var(--text)]"
-                                  aria-label={`Remove ${tag} tag`}
+                                  aria-label={`Remove ${tag} label`}
                                 >
                                   <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">
                                     <line x1="6" y1="6" x2="18" y2="18" strokeLinecap="round" />
@@ -1150,7 +1448,7 @@ export default function NotePage() {
                                 void saveTagsNow(tags.slice(0, -1));
                               }
                             }}
-                            placeholder={tags.length >= 10 ? 'Tag limit reached' : 'Press enter to add tag'}
+                            placeholder={tags.length >= 10 ? 'Label limit reached' : 'Press enter to add label'}
                             disabled={tags.length >= 10}
                             enterKeyHint="done"
                             autoCapitalize="none"
@@ -1158,7 +1456,7 @@ export default function NotePage() {
                             className="h-8 w-full rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface)] px-2.5 text-xs tulis-text placeholder:text-[color:var(--text3)] focus:border-[color:var(--accent)] focus:outline-none disabled:opacity-50"
                           />
                           <button type="submit" tabIndex={-1} aria-hidden="true" className="sr-only">
-                            Add tag
+                            Add label
                           </button>
                         </form>
 
@@ -1183,46 +1481,7 @@ export default function NotePage() {
                       </div>
                     )}
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void togglePinned();
-                    }}
-                    className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${pinned
-                      ? 'border-[color:var(--accent)] text-[color:var(--accent)] bg-[color:var(--surface2)]'
-                      : 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
-                      }`}
-                    aria-label={pinned ? 'Unpin note' : 'Pin note'}
-                    title={pinned ? 'Unpin note' : 'Pin note'}
-                  >
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="m12 17 4 4V9l3-5H5l3 5v12l4-4Z" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
                 </>
-              )}
-
-              {!isReadOnly && ready && (
-                <span className="hidden shrink-0 items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] tulis-muted sm:inline-flex">
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full ${syncStatus === 'syncing'
-                      ? 'bg-[color:var(--accent)]'
-                      : syncStatus === 'loading'
-                        ? 'bg-[color:var(--text3)]'
-                      : syncStatus === 'error'
-                        ? 'bg-[color:var(--text3)]'
-                        : 'bg-[color:var(--text2)]'
-                      }`}
-                  />
-                  {syncStatus === 'loading'
-                    ? 'Loading'
-                    : syncStatus === 'syncing'
-                      ? 'Syncing'
-                      : syncStatus === 'error'
-                        ? 'Failed'
-                        : 'Synced'}
-                </span>
               )}
             </div>
           </div>
@@ -1244,7 +1503,7 @@ export default function NotePage() {
           {isDeleted && (
             <div className="sticky top-3 z-30 mx-auto mb-4 max-w-[840px]" data-trash-banner>
               <div className="rounded-[var(--rMd)] border border-[color:var(--border2)] bg-[color:var(--surface2)] px-3 py-2.5 shadow-md">
-                <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
+                <div className="flex flex-col items-center justify-between gap-2 text-center sm:flex-row sm:items-center sm:text-left">
                   <p className="text-xs tulis-muted">
                     This note is in Trash • Auto-deletes on{' '}
                     <span className="font-semibold text-[color:var(--text)]">
@@ -1254,7 +1513,7 @@ export default function NotePage() {
                     </span>
                     .
                   </p>
-                  <div className="flex items-center gap-2">
+                  <div className="flex w-full items-center justify-center gap-2 sm:w-auto">
                     <button
                       type="button"
                       onClick={() => {

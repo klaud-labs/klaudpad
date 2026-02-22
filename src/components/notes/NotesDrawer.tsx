@@ -552,7 +552,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
 
       <aside
         id="notes-drawer"
-        className={`fixed inset-y-0 left-0 z-[150] w-[280px] max-w-[85vw] shrink-0 border-r tulis-border bg-[color:var(--surface)] transition-transform duration-200 md:static md:z-auto md:h-full md:max-w-none md:translate-x-0 md:transition-[width] md:duration-200 ${isSidebarOpen ? 'translate-x-0 md:w-[280px]' : '-translate-x-full md:w-0'}`}
+        className={`fixed inset-y-0 left-0 z-[150] w-[312px] max-w-[calc(100vw-2.5rem)] shrink-0 border-r tulis-border bg-[color:var(--surface)] transition-transform duration-200 md:static md:z-auto md:h-full md:max-w-none md:translate-x-0 md:transition-[width] md:duration-200 ${isSidebarOpen ? 'translate-x-0 md:w-[312px]' : '-translate-x-full md:w-0'}`}
       >
         <div className={`flex h-full min-h-0 flex-col ${isSidebarOpen ? 'opacity-100' : 'md:pointer-events-none md:opacity-0'}`}>
           <div className="shrink-0 px-3 pb-3 pt-3">
@@ -622,7 +622,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
                   type="search"
                   value={searchInput}
                   onChange={(event) => setSearchInput(event.target.value)}
-                  placeholder={sidebarMode === 'trash' ? 'Search trash' : 'Search title, content, tags'}
+                  placeholder={sidebarMode === 'trash' ? 'Search trash' : 'Search title, content, labels'}
                   className="h-10 w-full rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface)] pl-10 pr-3 text-sm tulis-text placeholder:text-[color:var(--text3)] focus:border-[color:var(--accent)] focus:outline-none"
                 />
               </div>
@@ -663,10 +663,10 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
           <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
             {sidebarMode === 'notes' && (
               <div>
-                <p className="pl-3 text-[11px] font-semibold uppercase tracking-[0.15em] text-[color:var(--text3)]">Tags</p>
+                <p className="pl-3 text-[11px] font-semibold uppercase tracking-[0.15em] text-[color:var(--text3)]">Labels</p>
                 <div className="mt-1.5 space-y-1.5">
                   {allTags.length === 0 ? (
-                    <p className="pl-4 text-xs tulis-muted">No tags yet</p>
+                    <p className="pl-4 text-xs tulis-muted">No labels yet</p>
                   ) : (
                     allTags.map((tag) => (
                       <button
