@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent as ReactTouchEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { db, auth } from '@/lib/firebase';
@@ -18,7 +18,7 @@ import {
 import { signOut } from 'firebase/auth';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { appNoteDoc, appNotesCollection } from '@/lib/firestorePaths';
-import { matchesNoteSearch, normalizeTag, notePreview, parseSearchFilters } from '@/lib/notes';
+import { matchesNoteSearch, normalizeLabel, notePreview, parseSearchFilters } from '@/lib/notes';
 import { createEmptyNoteForUser, ensureUserHasNote } from '@/lib/notesLifecycle';
 
 type NoteListItem = {
@@ -27,7 +27,7 @@ type NoteListItem = {
   content: string;
   updatedAt: Timestamp | null;
   deletedAt: Timestamp | null;
-  tags: string[];
+  labels: string[];
   pinned: boolean;
   isDeleted: boolean;
 };
@@ -47,20 +47,20 @@ const SIDEBAR_VIEW_OPTIONS: Array<{ value: SidebarView; label: string }> = [
   { value: 'pinned', label: 'Pinned' },
 ];
 
-function normalizeTagArray(value: unknown): string[] {
+function normalizeLabelArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
-  const tags: string[] = [];
+  const labels: string[] = [];
 
   value.forEach((item) => {
     if (typeof item !== 'string') return;
-    const normalized = normalizeTag(item);
+    const normalized = normalizeLabel(item);
     if (!normalized || seen.has(normalized)) return;
     seen.add(normalized);
-    if (tags.length < 10) tags.push(normalized);
+    if (labels.length < 10) labels.push(normalized);
   });
 
-  return tags;
+  return labels;
 }
 
 export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSidebarModeChange, onClose }: NotesDrawerProps) {
@@ -69,11 +69,18 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeView, setActiveView] = useState<SidebarView>('all');
-  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [openRowMenuId, setOpenRowMenuId] = useState<string | null>(null);
   const [confirmDeleteRowId, setConfirmDeleteRowId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const mobileSidebarCloseSwipeRef = useRef({
+    tracking: false,
+    closed: false,
+    touchId: -1,
+    startX: 0,
+    startY: 0,
+  });
   const lastActiveNoteIdRef = useRef<string | null>(null);
   const previousActiveNoteIdRef = useRef<string | null>(null);
   const currentRouteNoteIdRef = useRef<string>('');
@@ -83,6 +90,91 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
       onClose();
     }
   }, [onClose]);
+
+  const resetMobileSidebarCloseSwipe = useCallback(() => {
+    mobileSidebarCloseSwipeRef.current.tracking = false;
+    mobileSidebarCloseSwipeRef.current.closed = false;
+    mobileSidebarCloseSwipeRef.current.touchId = -1;
+  }, []);
+
+  const findCloseSwipeTouch = useCallback((touches: TouchList) => {
+    const trackedTouchId = mobileSidebarCloseSwipeRef.current.touchId;
+    if (trackedTouchId < 0) return touches[0] ?? null;
+
+    for (let index = 0; index < touches.length; index += 1) {
+      if (touches[index]?.identifier === trackedTouchId) {
+        return touches[index];
+      }
+    }
+
+    return null;
+  }, []);
+
+  const handleMobileSidebarCloseSwipeStart = useCallback((event: ReactTouchEvent<HTMLElement>) => {
+    resetMobileSidebarCloseSwipe();
+
+    if (!isSidebarOpen) return;
+    if (event.touches.length !== 1) return;
+    if (typeof window === 'undefined' || !window.matchMedia('(max-width: 767px)').matches) return;
+
+    const touch = event.touches[0];
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const rightEdgeBand = 56;
+
+    if (touch.clientX < bounds.right - rightEdgeBand) return;
+
+    mobileSidebarCloseSwipeRef.current.tracking = true;
+    mobileSidebarCloseSwipeRef.current.startX = touch.clientX;
+    mobileSidebarCloseSwipeRef.current.startY = touch.clientY;
+    mobileSidebarCloseSwipeRef.current.touchId = touch.identifier;
+  }, [isSidebarOpen, resetMobileSidebarCloseSwipe]);
+
+  const handleMobileSidebarCloseSwipeMove = useCallback((event: TouchEvent) => {
+    const swipe = mobileSidebarCloseSwipeRef.current;
+    if (!swipe.tracking || swipe.closed) return;
+
+    const touch = findCloseSwipeTouch(event.touches);
+    if (!touch) {
+      resetMobileSidebarCloseSwipe();
+      return;
+    }
+
+    const deltaX = touch.clientX - swipe.startX;
+    const deltaY = touch.clientY - swipe.startY;
+
+    if (deltaX > 8) {
+      resetMobileSidebarCloseSwipe();
+      return;
+    }
+
+    if (Math.abs(deltaY) > 56 && Math.abs(deltaY) > Math.abs(deltaX)) {
+      resetMobileSidebarCloseSwipe();
+      return;
+    }
+
+    if (deltaX <= -64 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      swipe.closed = true;
+      onClose();
+    }
+  }, [findCloseSwipeTouch, onClose, resetMobileSidebarCloseSwipe]);
+
+  const handleMobileSidebarCloseSwipeEnd = useCallback((event: TouchEvent) => {
+    const swipe = mobileSidebarCloseSwipeRef.current;
+    if (!swipe.tracking) return;
+
+    if (event.type === 'touchcancel') {
+      resetMobileSidebarCloseSwipe();
+      return;
+    }
+
+    const stillTrackingTouch = findCloseSwipeTouch(event.touches);
+    if (stillTrackingTouch) return;
+
+    resetMobileSidebarCloseSwipe();
+  }, [findCloseSwipeTouch, resetMobileSidebarCloseSwipe]);
 
   const rawUserName = auth.currentUser?.displayName?.trim() || auth.currentUser?.email?.split('@')[0] || 'User';
   const userDisplayName = rawUserName.split(/\s+/).filter(Boolean)[0] || 'User';
@@ -102,7 +194,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
     const notesQuery = query(
       appNotesCollection(db),
       where('ownerUid', '==', uid),
-      orderBy('updated_at', 'desc')
+      orderBy('updatedAt', 'desc')
     );
 
     const unsubscribe = onSnapshot(notesQuery, (snapshot) => {
@@ -112,11 +204,11 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
           id: snapshotDoc.id,
           title: typeof data.title === 'string' && data.title.trim() ? data.title : 'Untitled',
           content: typeof data.content === 'string' ? data.content : '',
-          updatedAt: (data.updatedAt as Timestamp | null) || (data.updated_at as Timestamp | null) || null,
-          deletedAt: (data.deleted_at as Timestamp | null) || null,
-          tags: normalizeTagArray(data.tags),
+          updatedAt: (data.updatedAt as Timestamp | null) || null,
+          deletedAt: (data.deletedAt as Timestamp | null) || null,
+          labels: normalizeLabelArray(data.labels),
           pinned: Boolean(data.pinned),
-          isDeleted: data.is_deleted === true,
+          isDeleted: data.isDeleted === true,
         };
       });
 
@@ -197,12 +289,34 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
     if (isSidebarOpen) return;
     setOpenRowMenuId(null);
     setConfirmDeleteRowId(null);
-  }, [isSidebarOpen]);
+    resetMobileSidebarCloseSwipe();
+  }, [isSidebarOpen, resetMobileSidebarCloseSwipe]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const onTouchMove = (event: TouchEvent) => {
+      handleMobileSidebarCloseSwipeMove(event);
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      handleMobileSidebarCloseSwipeEnd(event);
+    };
+
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
+    window.addEventListener('touchcancel', onTouchEnd);
+
+    return () => {
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [handleMobileSidebarCloseSwipeEnd, handleMobileSidebarCloseSwipeMove]);
 
   useEffect(() => {
     setOpenRowMenuId(null);
     setConfirmDeleteRowId(null);
-    setActiveTag(null);
+    setActiveLabel(null);
   }, [sidebarMode]);
 
   const activeNote = useMemo(
@@ -213,17 +327,17 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
   const notesInTrash = useMemo(() => notes.filter((note) => note.isDeleted), [notes]);
   const notesInMainView = useMemo(() => notes.filter((note) => !note.isDeleted), [notes]);
 
-  const allTags = useMemo(() => {
-    const tags = new Set<string>();
+  const allLabels = useMemo(() => {
+    const labels = new Set<string>();
     notesInMainView.forEach((note) => {
-      note.tags.forEach((tag) => tags.add(tag));
+      note.labels.forEach((label) => labels.add(label));
     });
-    return [...tags].sort((a, b) => a.localeCompare(b));
+    return [...labels].sort((a, b) => a.localeCompare(b));
   }, [notesInMainView]);
 
   const filters = useMemo(() => parseSearchFilters(searchQuery), [searchQuery]);
   const effectivePinnedOnly = sidebarMode === 'notes' && (activeView === 'pinned' || filters.pinnedOnly);
-  const effectiveTagFilter = sidebarMode === 'notes' ? (activeTag ?? filters.tagFromQuery) : null;
+  const effectiveLabelFilter = sidebarMode === 'notes' ? (activeLabel ?? filters.labelFromQuery) : null;
   const notePendingDelete = useMemo(() => {
     if (!confirmDeleteRowId) return null;
     return notes.find((note) => note.id === confirmDeleteRowId) ?? null;
@@ -233,10 +347,10 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
     const source = sidebarMode === 'trash' ? notesInTrash : notesInMainView;
     const filtered = source.filter((note) => {
       if (effectivePinnedOnly && !note.pinned) return false;
-      if (effectiveTagFilter && !note.tags.includes(effectiveTagFilter)) return false;
+      if (effectiveLabelFilter && !note.labels.includes(effectiveLabelFilter)) return false;
       return matchesNoteSearch(note, {
         normalizedText: filters.normalizedText,
-        tagFromQuery: null,
+        labelFromQuery: null,
         pinnedOnly: false,
       });
     });
@@ -248,7 +362,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
       const bMillis = b.deletedAt?.toMillis?.() ?? 0;
       return bMillis - aMillis;
     });
-  }, [effectivePinnedOnly, effectiveTagFilter, filters.normalizedText, notesInMainView, notesInTrash, sidebarMode]);
+  }, [effectivePinnedOnly, effectiveLabelFilter, filters.normalizedText, notesInMainView, notesInTrash, sidebarMode]);
 
   const createNote = useCallback(async () => {
     const uid = auth.currentUser?.uid;
@@ -263,7 +377,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
     onSidebarModeChange('notes');
     setOpenRowMenuId(null);
     setConfirmDeleteRowId(null);
-    setActiveTag(null);
+    setActiveLabel(null);
 
     if (!activeNote?.isDeleted) return;
     const uid = auth.currentUser?.uid;
@@ -277,7 +391,6 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
     await updateDoc(appNoteDoc(db, noteId), {
       pinned: nextPinned,
       updatedAt: serverTimestamp(),
-      updated_at: serverTimestamp(),
     });
   }, []);
 
@@ -327,10 +440,9 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
       }
 
       await updateDoc(appNoteDoc(db, noteId), {
-        is_deleted: true,
-        deleted_at: serverTimestamp(),
+        isDeleted: true,
+        deletedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        updated_at: serverTimestamp(),
       });
     } catch (error) {
       console.error('Failed to move note to trash:', error);
@@ -340,10 +452,9 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
   const restoreNote = useCallback(async (noteId: string) => {
     try {
       await updateDoc(appNoteDoc(db, noteId), {
-        is_deleted: false,
-        deleted_at: deleteField(),
+        isDeleted: false,
+        deletedAt: deleteField(),
         updatedAt: serverTimestamp(),
-        updated_at: serverTimestamp(),
       });
       onSidebarModeChange('notes');
       setOpenRowMenuId(null);
@@ -396,7 +507,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
     return (
       <li key={note.id}>
         <div className={`group relative min-h-[56px] rounded-[var(--rSm)] border px-2 py-1.5 transition-colors ${isActive
-          ? 'border-[color:var(--border2)] bg-[color:var(--surface2)]'
+          ? 'border-transparent bg-transparent hover:border-[color:var(--border2)] hover:bg-[color:var(--surface2)]/70'
           : 'border-transparent hover:border-[color:var(--border2)] hover:bg-[color:var(--surface2)]/70'
           }`}>
           {isActive && <div className="absolute bottom-1.5 left-0 top-1.5 w-[3px] rounded-full bg-[color:var(--accent)]" />}
@@ -416,7 +527,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
                 <p className="min-w-0 flex-1 truncate text-sm font-semibold tulis-text">{note.title}</p>
                 {note.pinned && (
                   <svg
-                    className="h-3.5 w-3.5 shrink-0 text-[color:var(--accent)]"
+                    className="h-3.5 w-3.5 shrink-0 text-[color:var(--text2)]"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -435,14 +546,14 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
             </div>
             <div className="mt-0.5 flex items-center gap-2">
               <p className="min-w-0 flex-1 truncate text-xs tulis-muted">{notePreview(note.content)}</p>
-              {note.tags.length > 0 && (
+              {note.labels.length > 0 && (
                 <div className="flex items-center gap-1">
-                  {note.tags.slice(0, 2).map((tag) => (
+                  {note.labels.slice(0, 2).map((label) => (
                     <span
-                      key={tag}
+                      key={label}
                       className="rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-1.5 py-0.5 text-[10px] font-medium tulis-muted"
                     >
-                      {tag}
+                      {label}
                     </span>
                   ))}
                 </div>
@@ -552,7 +663,8 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
 
       <aside
         id="notes-drawer"
-        className={`fixed inset-y-0 left-0 z-[150] w-[280px] max-w-[85vw] shrink-0 border-r tulis-border bg-[color:var(--surface)] transition-transform duration-200 md:static md:z-auto md:h-full md:max-w-none md:translate-x-0 md:transition-[width] md:duration-200 ${isSidebarOpen ? 'translate-x-0 md:w-[280px]' : '-translate-x-full md:w-0'}`}
+        className={`fixed inset-y-0 left-0 z-[150] w-[312px] max-w-[calc(100vw-2.5rem)] shrink-0 border-r tulis-border bg-[color:var(--sidebar)] transition-transform duration-200 md:static md:z-auto md:h-full md:max-w-none md:translate-x-0 md:transition-[width] md:duration-200 ${isSidebarOpen ? 'translate-x-0 md:w-[312px]' : '-translate-x-full md:w-0'}`}
+        onTouchStart={handleMobileSidebarCloseSwipeStart}
       >
         <div className={`flex h-full min-h-0 flex-col ${isSidebarOpen ? 'opacity-100' : 'md:pointer-events-none md:opacity-0'}`}>
           <div className="shrink-0 px-3 pb-3 pt-3">
@@ -568,9 +680,9 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
                 type="button"
                 onClick={onClose}
                 aria-label="Close drawer"
-                className="group flex h-9 w-9 items-center justify-center rounded-[var(--rSm)] border tulis-border bg-[color:var(--surface)] transition-colors hover:border-[color:var(--accent)] hover:bg-[color:var(--surface2)] md:hidden"
+                className="group flex h-9 w-9 items-center justify-center rounded-[var(--rSm)] border tulis-border bg-[color:var(--surface)] transition-colors hover:border-[color:var(--border)] hover:bg-[color:var(--surface2)] md:hidden"
               >
-                <svg className="h-4 w-4 tulis-muted transition-colors group-hover:text-[color:var(--accent)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">
+                <svg className="h-4 w-4 tulis-muted transition-colors group-hover:text-[color:var(--text)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">
                   <polyline points="15 18 9 12 15 6" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
@@ -588,8 +700,8 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
               aria-label={sidebarMode === 'trash' ? 'Return to notes' : 'Create new note'}
               title={sidebarMode === 'trash' ? 'Return to notes' : 'Create new note'}
               className={`mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-[var(--rSm)] px-3 text-sm font-medium transition-colors ${sidebarMode === 'trash'
-                ? 'tulis-return-notes-btn border border-[color:var(--border2)] text-[color:var(--accent)]'
-                : 'bg-[color:var(--accent)] text-white transition-[filter] duration-150 hover:brightness-[0.96] active:brightness-[0.94]'
+                ? 'tulis-return-notes-btn border border-[color:var(--border2)] text-[color:var(--text2)] hover:bg-[color:var(--surface)] hover:text-[color:var(--text)]'
+                : 'bg-[color:var(--accent)] text-white transition-colors duration-150 hover:bg-[color:var(--accentHover)] active:bg-[color:var(--accentActive)]'
                 }`}
             >
               {sidebarMode === 'trash' ? (
@@ -622,7 +734,7 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
                   type="search"
                   value={searchInput}
                   onChange={(event) => setSearchInput(event.target.value)}
-                  placeholder={sidebarMode === 'trash' ? 'Search trash' : 'Search title, content, tags'}
+                  placeholder={sidebarMode === 'trash' ? 'Search trash' : 'Search title, content, labels'}
                   className="h-10 w-full rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface)] pl-10 pr-3 text-sm tulis-text placeholder:text-[color:var(--text3)] focus:border-[color:var(--accent)] focus:outline-none"
                 />
               </div>
@@ -663,24 +775,24 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
           <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
             {sidebarMode === 'notes' && (
               <div>
-                <p className="pl-3 text-[11px] font-semibold uppercase tracking-[0.15em] text-[color:var(--text3)]">Tags</p>
+                <p className="pl-3 text-[11px] font-semibold uppercase tracking-[0.15em] text-[color:var(--text3)]">Labels</p>
                 <div className="mt-1.5 space-y-1.5">
-                  {allTags.length === 0 ? (
-                    <p className="pl-4 text-xs tulis-muted">No tags yet</p>
+                  {allLabels.length === 0 ? (
+                    <p className="pl-4 text-xs tulis-muted">No labels yet</p>
                   ) : (
-                    allTags.map((tag) => (
+                    allLabels.map((label) => (
                       <button
-                        key={tag}
+                        key={label}
                         type="button"
                         onClick={() => {
-                          setActiveTag((current) => current === tag ? null : tag);
+                          setActiveLabel((current) => current === label ? null : label);
                         }}
-                        className={`w-full rounded-[var(--rSm)] py-1.5 pl-4 pr-2 text-left text-xs font-medium transition-colors ${activeTag === tag
+                        className={`w-full rounded-[var(--rSm)] py-1.5 pl-4 pr-2 text-left text-xs font-medium transition-colors ${activeLabel === label
                           ? 'bg-[color:var(--surface2)] text-[color:var(--text)]'
                           : 'tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
                           }`}
                       >
-                        {tag}
+                        {label}
                       </button>
                     ))
                   )}

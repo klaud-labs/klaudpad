@@ -1,6 +1,6 @@
 # tulis
 
-tulis is a Firebase-backed note-taking app with real-time sync, tags, slash commands, and a clean desktop/mobile UI.
+tulis is a Firebase-backed note-taking app with real-time sync, labels, slash commands, and a clean desktop/mobile UI.
 
 ## What The App Does
 
@@ -12,8 +12,8 @@ tulis is a Firebase-backed note-taking app with real-time sync, tags, slash comm
   - Invalid/non-owned note routes recover to an accessible note.
 - Sidebar workflows:
   - `All` and `Pinned` tabs
-  - Full-text search (title + content + tags)
-  - Tag filtering
+  - Full-text search (title + content + labels)
+  - Label filtering
 - Editor workflows:
   - TipTap rich-text editor
   - Slash command menu (`/`)
@@ -29,6 +29,10 @@ tulis is a Firebase-backed note-taking app with real-time sync, tags, slash comm
 - Tailwind CSS v4
 - Firebase Auth + Cloud Firestore
 - TipTap editor (`@tiptap/react`, StarterKit, suggestion plugins)
+
+## Design Docs
+
+- `docs/color-theming.md` - color tokens, layer mappings, and accent usage rules
 
 ## Project Structure
 
@@ -54,7 +58,7 @@ src/
   lib/
     firebase.ts                 # Firebase init
     firestorePaths.ts           # App-scoped Firestore paths
-    notes.ts                    # Tag normalization + search parsing
+    notes.ts                    # Label normalization + search parsing
     notesLifecycle.ts           # Ensure-user-note flows and recovery
     notesQuery.ts               # Latest note lookup helpers
     userRegistration.ts         # User directory app registration
@@ -87,11 +91,12 @@ Core fields used by the app:
 - `ownerUid: string`
 - `title: string`
 - `content: string` (plain text for search preview)
-- `content_json: JSON` (TipTap document)
-- `tags: string[]` (normalized, lowercase, max 10)
+- `contentJson: JSON` (TipTap document)
+- `labels: string[]` (normalized, lowercase, max 10)
 - `pinned: boolean`
+- `isDeleted: boolean`
+- `deletedAt: timestamp | null`
 - `createdAt`, `updatedAt` (timestamps)
-- Compatibility fields still present: `created_at`, `updated_at`
 
 ## Sync Model
 

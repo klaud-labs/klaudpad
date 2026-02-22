@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent as ReactTouchEvent } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { NotesDrawer } from '@/components/notes/NotesDrawer';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
@@ -19,7 +19,7 @@ import { DateChip } from '@/editor/DateChip';
 import { CodeBlock } from '@/editor/CodeBlock';
 import { DatePicker } from '@/components/editor/DatePicker';
 import { offOpenDatePicker, onOpenDatePicker } from '@/lib/editor/datePickerEvent';
-import { normalizeTag, normalizeTags } from '@/lib/notes';
+import { normalizeLabel, normalizeLabels } from '@/lib/notes';
 import { ensureUserHasNote } from '@/lib/notesLifecycle';
 
 type SyncStatus = 'loading' | 'syncing' | 'synced' | 'error';
@@ -31,6 +31,64 @@ type SelectionToolbarState = {
 };
 type SidebarMode = 'notes' | 'trash';
 
+function stripCompletedTasksFromNode(node: JSONContent): { node: JSONContent | null; removedCount: number } {
+  let removedCount = 0;
+  const children = Array.isArray(node.content) ? node.content : null;
+
+  if (!children) {
+    return { node, removedCount };
+  }
+
+  const nextChildren: JSONContent[] = [];
+  let changed = false;
+
+  for (const child of children) {
+    if (child.type === 'taskItem' && child.attrs?.checked === true) {
+      removedCount += 1;
+      changed = true;
+      continue;
+    }
+
+    const result = stripCompletedTasksFromNode(child);
+    removedCount += result.removedCount;
+
+    if (!result.node) {
+      changed = true;
+      continue;
+    }
+
+    if (result.node !== child) {
+      changed = true;
+    }
+
+    nextChildren.push(result.node);
+  }
+
+  if (node.type === 'taskList' && nextChildren.length === 0) {
+    return { node: null, removedCount };
+  }
+
+  if (!changed) {
+    return { node, removedCount };
+  }
+
+  return {
+    node: {
+      ...node,
+      content: nextChildren,
+    },
+    removedCount,
+  };
+}
+
+function stripCompletedTasksFromDoc(doc: JSONContent): { doc: JSONContent; removedCount: number } {
+  const result = stripCompletedTasksFromNode(doc);
+  if (!result.node || result.node.type !== 'doc') {
+    return { doc: { type: 'doc', content: [] }, removedCount: result.removedCount };
+  }
+  return { doc: result.node, removedCount: result.removedCount };
+}
+
 export default function NotePage() {
   const router = useRouter();
   const routeParams = useParams<{ id: string }>();
@@ -38,9 +96,9 @@ export default function NotePage() {
   const { user, loading: authLoading } = useAuthGuard();
   const noteId = typeof routeParams?.id === 'string' ? routeParams.id : null;
   const [title, setTitle] = useState('');
-  const [tags, setTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState('');
-  const [allUserTags, setAllUserTags] = useState<string[]>([]);
+  const [labels, setLabels] = useState<string[]>([]);
+  const [labelInput, setLabelInput] = useState('');
+  const [allUserLabels, setAllUserLabels] = useState<string[]>([]);
   const [hasTrashNotes, setHasTrashNotes] = useState(false);
   const [hasLoadedUserNotes, setHasLoadedUserNotes] = useState(false);
   const [pinned, setPinned] = useState(false);
@@ -51,7 +109,8 @@ export default function NotePage() {
     if (typeof window === 'undefined') return true;
     return !window.matchMedia('(max-width: 767px)').matches;
   });
-  const [isTagPopoverOpen, setIsTagPopoverOpen] = useState(false);
+  const [isLabelPopoverOpen, setIsLabelPopoverOpen] = useState(false);
+  const [isHeaderActionsMenuOpen, setIsHeaderActionsMenuOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('loading');
   const [isTitleFocused, setIsTitleFocused] = useState(false);
@@ -70,11 +129,18 @@ export default function NotePage() {
   const contentSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
-  const tagInputRef = useRef<HTMLInputElement | null>(null);
-  const tagPopoverRef = useRef<HTMLDivElement | null>(null);
+  const labelInputRef = useRef<HTMLInputElement | null>(null);
+  const labelPopoverRef = useRef<HTMLDivElement | null>(null);
   const editorScrollRef = useRef<HTMLElement | null>(null);
   const lastSelectionRangeRef = useRef<{ from: number; to: number } | null>(null);
   const selectionGestureActiveRef = useRef(false);
+  const mobileSidebarSwipeRef = useRef({
+    tracking: false,
+    opened: false,
+    touchId: -1,
+    startX: 0,
+    startY: 0,
+  });
   const focusedTitleForNoteRef = useRef<string | null>(null);
   const recoveringNoteRef = useRef(false);
   const trashCleanupRunningRef = useRef(false);
@@ -93,6 +159,7 @@ export default function NotePage() {
     changeVersionRef.current = 0;
     savedVersionRef.current = 0;
     setConfirmPermanentDeleteOpen(false);
+    setIsHeaderActionsMenuOpen(false);
   }, [noteId]);
 
   const markDirty = useCallback(() => {
@@ -158,7 +225,7 @@ export default function NotePage() {
 
   useEffect(() => {
     if (!user) {
-      setAllUserTags([]);
+      setAllUserLabels([]);
       setHasTrashNotes(false);
       setHasLoadedUserNotes(false);
       return;
@@ -166,16 +233,16 @@ export default function NotePage() {
 
     const byOwnerUid = query(appNotesCollection(db), where('ownerUid', '==', user.uid));
 
-    const collectTags = (docs: Array<{ data: () => Record<string, unknown> }>) => {
+    const collectLabels = (docs: Array<{ data: () => Record<string, unknown> }>) => {
       const deduped = new Set<string>();
 
       docs.forEach((snapshotDoc) => {
         const data = snapshotDoc.data();
-        if (data.is_deleted === true) return;
-        if (!Array.isArray(data.tags)) return;
-        data.tags.forEach((tag) => {
+        if (data.isDeleted === true) return;
+        if (!Array.isArray(data.labels)) return;
+        data.labels.forEach((tag) => {
           if (typeof tag !== 'string') return;
-          const normalized = normalizeTag(tag);
+          const normalized = normalizeLabel(tag);
           if (normalized) deduped.add(normalized);
         });
       });
@@ -186,8 +253,8 @@ export default function NotePage() {
     let ownerUidDocs: Array<{ data: () => Record<string, unknown> }> = [];
 
     const sync = () => {
-      setAllUserTags(collectTags(ownerUidDocs));
-      setHasTrashNotes(ownerUidDocs.some((snapshotDoc) => snapshotDoc.data().is_deleted === true));
+      setAllUserLabels(collectLabels(ownerUidDocs));
+      setHasTrashNotes(ownerUidDocs.some((snapshotDoc) => snapshotDoc.data().isDeleted === true));
       setHasLoadedUserNotes(true);
     };
 
@@ -196,10 +263,10 @@ export default function NotePage() {
       sync();
     }, (error) => {
       if (error.code === 'permission-denied') {
-        console.warn('Tag sync permission denied for ownerUid query.');
+        console.warn('Label sync permission denied for ownerUid query.');
         return;
       }
-      console.error('Tag sync error (ownerUid):', error);
+      console.error('Label sync error (ownerUid):', error);
       setHasLoadedUserNotes(true);
     });
 
@@ -221,12 +288,13 @@ export default function NotePage() {
       const data = snapshot.data();
       setTitle(typeof data.title === 'string' ? data.title : '');
       setPinned(Boolean(data.pinned));
-      const deleted = data.is_deleted === true;
+      const deleted = data.isDeleted === true;
       setIsDeleted(deleted);
-      setDeletedAt((data.deleted_at as Timestamp | null) || null);
+      setDeletedAt((data.deletedAt as Timestamp | null) || null);
       if (deleted) {
         setSidebarMode('trash');
-        setIsTagPopoverOpen(false);
+        setIsHeaderActionsMenuOpen(false);
+        setIsLabelPopoverOpen(false);
       }
       try {
         window.localStorage.setItem(`tulis:lastNoteId:${user.uid}`, noteId);
@@ -234,12 +302,12 @@ export default function NotePage() {
         // Ignore localStorage write failures.
       }
 
-      const incomingTags = Array.isArray(data.tags)
-        ? normalizeTags(data.tags.filter((value): value is string => typeof value === 'string'))
+      const incomingLabels = Array.isArray(data.labels)
+        ? normalizeLabels(data.labels.filter((value): value is string => typeof value === 'string'))
         : [];
-      setTags(incomingTags);
+      setLabels(incomingLabels);
 
-      const newContent = data.content_json || { type: 'doc', content: [] };
+      const newContent = data.contentJson || { type: 'doc', content: [] };
       const currentContent = editor.getJSON();
       const isInitialHydration = !hasHydratedContentRef.current;
       const hasPendingLocalContent = changeVersionRef.current > savedVersionRef.current;
@@ -279,7 +347,8 @@ export default function NotePage() {
     if (!editor) return;
     editor.setEditable(!isReadOnly);
     if (isReadOnly) {
-      setIsTagPopoverOpen(false);
+      setIsHeaderActionsMenuOpen(false);
+      setIsLabelPopoverOpen(false);
       setDatePickerOpen(false);
       setSelectionToolbar((current) => (current.visible ? { ...current, visible: false } : current));
     }
@@ -299,10 +368,9 @@ export default function NotePage() {
     try {
       const noteRef = appNoteDoc(db, noteId);
       await updateDoc(noteRef, {
-        content_json: content,
+        contentJson: content,
         content: plainText,
         updatedAt: serverTimestamp(),
-        updated_at: serverTimestamp(),
       });
       markSaved(version);
     } catch (error) {
@@ -319,7 +387,6 @@ export default function NotePage() {
       await updateDoc(noteRef, {
         title: newTitle,
         updatedAt: serverTimestamp(),
-        updated_at: serverTimestamp(),
       });
       markSaved(version);
     } catch (error) {
@@ -328,20 +395,19 @@ export default function NotePage() {
     }
   }, [isReadOnly, noteId, user, markSaved]);
 
-  const saveTagsNow = useCallback(async (nextTags: string[]) => {
+  const saveLabelsNow = useCallback(async (nextLabels: string[]) => {
     if (!noteId || !user || isReadOnly) return;
 
-    const normalized = normalizeTags(nextTags);
-    setTags(normalized);
+    const normalized = normalizeLabels(nextLabels);
+    setLabels(normalized);
 
     try {
       await updateDoc(appNoteDoc(db, noteId), {
-        tags: normalized,
+        labels: normalized,
         updatedAt: serverTimestamp(),
-        updated_at: serverTimestamp(),
       });
     } catch (error) {
-      console.error('Failed to save tags:', error);
+      console.error('Failed to save labels:', error);
       setSyncStatus('error');
     }
   }, [isReadOnly, noteId, user]);
@@ -356,7 +422,6 @@ export default function NotePage() {
       await updateDoc(appNoteDoc(db, noteId), {
         pinned: nextPinned,
         updatedAt: serverTimestamp(),
-        updated_at: serverTimestamp(),
       });
     } catch (error) {
       console.error('Failed to toggle pin:', error);
@@ -365,15 +430,48 @@ export default function NotePage() {
     }
   }, [isReadOnly, noteId, user, pinned]);
 
+  const moveCurrentNoteToTrash = useCallback(async () => {
+    if (!noteId || !user || isReadOnly) return;
+
+    setIsHeaderActionsMenuOpen(false);
+    setIsLabelPopoverOpen(false);
+
+    try {
+      await updateDoc(appNoteDoc(db, noteId), {
+        isDeleted: true,
+        deletedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error('Failed to move note to trash:', error);
+      setSyncStatus('error');
+    }
+  }, [isReadOnly, noteId, user]);
+
+  const clearCompletedTasks = useCallback(() => {
+    if (!editor || isReadOnly) return;
+
+    const currentDoc = editor.getJSON();
+    const { doc: nextDoc, removedCount } = stripCompletedTasksFromDoc(currentDoc);
+    if (removedCount === 0) {
+      setIsHeaderActionsMenuOpen(false);
+      return;
+    }
+
+    setIsHeaderActionsMenuOpen(false);
+    setIsLabelPopoverOpen(false);
+    editor.commands.setContent(nextDoc, { emitUpdate: true });
+    editor.commands.focus();
+  }, [editor, isReadOnly]);
+
   const restoreNoteFromTrash = useCallback(async () => {
     if (!noteId || !user || !isDeleted) return;
 
     try {
       await updateDoc(appNoteDoc(db, noteId), {
-        is_deleted: false,
-        deleted_at: deleteField(),
+        isDeleted: false,
+        deletedAt: deleteField(),
         updatedAt: serverTimestamp(),
-        updated_at: serverTimestamp(),
       });
       setSidebarMode('notes');
       setConfirmPermanentDeleteOpen(false);
@@ -394,8 +492,8 @@ export default function NotePage() {
 
       const expiredDocs = snapshot.docs.filter((docSnapshot) => {
         const data = docSnapshot.data();
-        if (data.is_deleted !== true) return false;
-        const deletedAt = (data.deleted_at as Timestamp | null) || null;
+        if (data.isDeleted !== true) return false;
+        const deletedAt = (data.deletedAt as Timestamp | null) || null;
         if (!deletedAt?.toMillis) return false;
         return deletedAt.toMillis() <= cutoffMs;
       });
@@ -430,8 +528,8 @@ export default function NotePage() {
             const data = docSnapshot.data();
             return {
               id: docSnapshot.id,
-              isDeleted: data.is_deleted === true,
-              deletedAt: (data.deleted_at as Timestamp | null) || null,
+              isDeleted: data.isDeleted === true,
+              deletedAt: (data.deletedAt as Timestamp | null) || null,
             };
           })
           .filter((item) => item.id !== noteId && item.isDeleted)
@@ -475,44 +573,45 @@ export default function NotePage() {
     }, 600);
   }, [saveTitleNow]);
 
-  const openTagPopover = useCallback(() => {
+  const openLabelPopover = useCallback(() => {
     if (isReadOnly) return;
-    setIsTagPopoverOpen(true);
+    setIsHeaderActionsMenuOpen(false);
+    setIsLabelPopoverOpen(true);
     window.requestAnimationFrame(() => {
-      tagInputRef.current?.focus();
+      labelInputRef.current?.focus();
     });
   }, [isReadOnly]);
 
-  const tagSuggestions = useMemo(() => {
-    const normalizedInput = normalizeTag(tagInput) || tagInput.trim().toLowerCase();
-    const availableTags = allUserTags.filter((tag) => !tags.includes(tag));
-    if (!normalizedInput) return availableTags.slice(0, 8);
+  const labelSuggestions = useMemo(() => {
+    const normalizedInput = normalizeLabel(labelInput) || labelInput.trim().toLowerCase();
+    const availableLabels = allUserLabels.filter((label) => !labels.includes(label));
+    if (!normalizedInput) return availableLabels.slice(0, 8);
 
-    return availableTags
-      .filter((tag) => tag.includes(normalizedInput))
+    return availableLabels
+      .filter((label) => label.includes(normalizedInput))
       .slice(0, 8);
-  }, [allUserTags, tagInput, tags]);
+  }, [allUserLabels, labelInput, labels]);
 
-  const addTagFromInput = useCallback(() => {
-    const normalized = normalizeTag(tagInput);
+  const addLabelFromInput = useCallback(() => {
+    const normalized = normalizeLabel(labelInput);
     if (!normalized) {
-      setTagInput('');
+      setLabelInput('');
       return;
     }
 
-    if (tags.includes(normalized)) {
-      setTagInput('');
+    if (labels.includes(normalized)) {
+      setLabelInput('');
       return;
     }
 
-    if (tags.length >= 10) {
-      setTagInput('');
+    if (labels.length >= 10) {
+      setLabelInput('');
       return;
     }
 
-    setTagInput('');
-    void saveTagsNow([...tags, normalized]);
-  }, [tagInput, tags, saveTagsNow]);
+    setLabelInput('');
+    void saveLabelsNow([...labels, normalized]);
+  }, [labelInput, labels, saveLabelsNow]);
 
   const hideSelectionToolbar = useCallback(() => {
     setSelectionToolbar((current) => (current.visible ? { ...current, visible: false } : current));
@@ -580,7 +679,7 @@ export default function NotePage() {
     }
   }, [editor, hideSelectionToolbar, isMobileSelectionViewport, isReadOnly]);
 
-  const runSelectionMarkToggle = useCallback((mark: 'bold' | 'italic' | 'underline' | 'strike') => {
+  const runSelectionMarkToggle = useCallback((mark: 'bold' | 'italic' | 'underline' | 'strike' | 'code') => {
     if (!editor || isReadOnly) return;
 
     const chain = editor.chain().focus();
@@ -592,6 +691,7 @@ export default function NotePage() {
     if (mark === 'italic') chain.toggleItalic();
     if (mark === 'underline') chain.toggleUnderline();
     if (mark === 'strike') chain.toggleStrike();
+    if (mark === 'code') chain.toggleCode();
     chain.run();
 
     window.requestAnimationFrame(() => updateSelectionToolbar(editor));
@@ -622,6 +722,115 @@ export default function NotePage() {
 
     return canChain.run();
   }, [editor, getSelectionAnchor, isReadOnly]);
+
+  const resetMobileSidebarSwipe = useCallback(() => {
+    mobileSidebarSwipeRef.current.tracking = false;
+    mobileSidebarSwipeRef.current.opened = false;
+    mobileSidebarSwipeRef.current.touchId = -1;
+  }, []);
+
+  const findTrackedTouch = useCallback((touches: TouchList) => {
+    const trackedTouchId = mobileSidebarSwipeRef.current.touchId;
+    if (trackedTouchId < 0) return touches[0] ?? null;
+
+    for (let index = 0; index < touches.length; index += 1) {
+      if (touches[index]?.identifier === trackedTouchId) {
+        return touches[index];
+      }
+    }
+
+    return null;
+  }, []);
+
+  const handleMobileSidebarSwipeStart = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
+    resetMobileSidebarSwipe();
+
+    if (isSidebarOpen) return;
+    if (event.touches.length !== 1) return;
+    if (typeof window === 'undefined' || !window.matchMedia('(max-width: 767px)').matches) return;
+
+    const touch = event.touches[0];
+    // Leave the far-left edge to the browser/OS back-swipe gesture.
+    const reservedBackGestureEdge = 28;
+    // Allow the drawer-open swipe from the left side, but not the entire screen.
+    const sidebarSwipeStartMax = Math.min(window.innerWidth * 0.35, 160);
+
+    if (touch.clientX <= reservedBackGestureEdge || touch.clientX > sidebarSwipeStartMax) {
+      return;
+    }
+
+    mobileSidebarSwipeRef.current.tracking = true;
+    mobileSidebarSwipeRef.current.startX = touch.clientX;
+    mobileSidebarSwipeRef.current.startY = touch.clientY;
+    mobileSidebarSwipeRef.current.touchId = touch.identifier;
+  }, [isSidebarOpen, resetMobileSidebarSwipe]);
+
+  const handleMobileSidebarSwipeMove = useCallback((event: TouchEvent) => {
+    const swipe = mobileSidebarSwipeRef.current;
+    if (!swipe.tracking || swipe.opened) return;
+
+    const touch = findTrackedTouch(event.touches);
+    if (!touch) {
+      resetMobileSidebarSwipe();
+      return;
+    }
+    const deltaX = touch.clientX - swipe.startX;
+    const deltaY = touch.clientY - swipe.startY;
+
+    if (deltaX < -8) {
+      resetMobileSidebarSwipe();
+      return;
+    }
+
+    if (Math.abs(deltaY) > 56 && Math.abs(deltaY) > Math.abs(deltaX)) {
+      resetMobileSidebarSwipe();
+      return;
+    }
+
+    if (deltaX >= 72 && deltaX > Math.abs(deltaY) * 1.25) {
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      swipe.opened = true;
+      setIsSidebarOpen(true);
+    }
+  }, [findTrackedTouch, resetMobileSidebarSwipe]);
+
+  const handleMobileSidebarSwipeEnd = useCallback((event: TouchEvent) => {
+    const swipe = mobileSidebarSwipeRef.current;
+    if (!swipe.tracking) return;
+
+    if (event.type === 'touchcancel') {
+      resetMobileSidebarSwipe();
+      return;
+    }
+
+    const stillTrackingTouch = findTrackedTouch(event.touches);
+    if (stillTrackingTouch) return;
+
+    resetMobileSidebarSwipe();
+  }, [findTrackedTouch, resetMobileSidebarSwipe]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const onTouchMove = (event: TouchEvent) => {
+      handleMobileSidebarSwipeMove(event);
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      handleMobileSidebarSwipeEnd(event);
+    };
+
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
+    window.addEventListener('touchcancel', onTouchEnd);
+
+    return () => {
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [handleMobileSidebarSwipeEnd, handleMobileSidebarSwipeMove]);
 
   const runSelectionListShift = useCallback((direction: 'left' | 'right') => {
     if (!editor || isReadOnly) return;
@@ -690,28 +899,30 @@ export default function NotePage() {
       if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
       if (event.key.toLowerCase() !== 't') return;
       event.preventDefault();
-      openTagPopover();
+      openLabelPopover();
     };
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [isReadOnly, openTagPopover]);
+  }, [isReadOnly, openLabelPopover]);
 
   useEffect(() => {
-    if (!isTagPopoverOpen) return;
+    if (!isLabelPopoverOpen && !isHeaderActionsMenuOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (!target) return;
-      if (tagPopoverRef.current?.contains(target)) return;
-      setIsTagPopoverOpen(false);
-      setTagInput('');
+      if (labelPopoverRef.current?.contains(target)) return;
+      setIsHeaderActionsMenuOpen(false);
+      setIsLabelPopoverOpen(false);
+      setLabelInput('');
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      setIsTagPopoverOpen(false);
-      setTagInput('');
+      setIsHeaderActionsMenuOpen(false);
+      setIsLabelPopoverOpen(false);
+      setLabelInput('');
     };
 
     window.addEventListener('mousedown', handlePointerDown);
@@ -720,7 +931,7 @@ export default function NotePage() {
       window.removeEventListener('mousedown', handlePointerDown);
       window.removeEventListener('keydown', handleEscape);
     };
-  }, [isTagPopoverOpen]);
+  }, [isHeaderActionsMenuOpen, isLabelPopoverOpen]);
 
   useEffect(() => {
     if (!editor) return;
@@ -917,7 +1128,7 @@ export default function NotePage() {
     };
   }, [noteId, ready, shouldFocusTitle]);
 
-  const hasTags = tags.length > 0;
+  const hasLabels = labels.length > 0;
   const displayTitle = isTrashEmptyView ? '' : title;
   const titlePlaceholder = isTrashEmptyView ? '' : 'Untitled';
   const autoDeleteDate = useMemo(() => {
@@ -927,6 +1138,8 @@ export default function NotePage() {
   }, [deletedAt]);
   const canTabLeft = canShiftListItem('left', 'taskItem') || canShiftListItem('left', 'listItem');
   const canTabRight = canShiftListItem('right', 'taskItem') || canShiftListItem('right', 'listItem');
+  const canUndo = !isReadOnly && (editor?.can().chain().undo().run() ?? false);
+  const canRedo = !isReadOnly && (editor?.can().chain().redo().run() ?? false);
   const selectionToolbarButtons = [
     {
       id: 'tab-left',
@@ -982,6 +1195,15 @@ export default function NotePage() {
       onPress: () => runSelectionMarkToggle('strike'),
       className: 'line-through decoration-2',
     },
+    {
+      id: 'inline-code',
+      label: '</>',
+      ariaLabel: 'Toggle inline code',
+      active: editor?.isActive('code') ?? false,
+      disabled: false,
+      onPress: () => runSelectionMarkToggle('code'),
+      className: 'font-mono text-[11px] tracking-tight',
+    },
   ];
 
   if (!noteId || (authLoading && !user)) {
@@ -989,7 +1211,10 @@ export default function NotePage() {
   }
 
   return (
-    <div className="flex h-screen w-full overflow-hidden tulis-bg font-sans selection:bg-[color:var(--focusRing)]">
+    <div
+      className="flex h-screen w-full overflow-hidden tulis-bg font-sans selection:bg-[color:var(--focusRing)]"
+      onTouchStart={handleMobileSidebarSwipeStart}
+    >
       <NotesDrawer
         isSidebarOpen={isSidebarOpen}
         currentNoteId={noteId ?? ''}
@@ -998,19 +1223,19 @@ export default function NotePage() {
         onClose={() => setIsSidebarOpen(false)}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="shrink-0 border-b tulis-border bg-[color:var(--surface)] px-3 py-2.5 sm:px-4">
-          <div className="mx-auto flex min-w-0 max-w-[840px] items-center justify-between gap-3">
-            <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[color:var(--canvas)]">
+        <header className="shrink-0 border-b border-[color:var(--divider)] bg-[color:var(--header)] px-3 py-2.5 sm:px-4">
+          <div className="mx-auto grid min-w-0 max-w-[840px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[auto_minmax(0,1fr)_13.75rem] sm:gap-3">
+            <div className="flex min-w-0 items-center justify-start">
               <button
                 type="button"
-                className="group flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--rSm)] border tulis-border bg-[color:var(--surface)] transition-colors hover:border-[color:var(--accent)] hover:bg-[color:var(--surface2)]"
+                className="group flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--rSm)] border tulis-border bg-[color:var(--surface)] transition-colors hover:border-[color:var(--border)] hover:bg-[color:var(--surface2)]"
                 onClick={() => setIsSidebarOpen((open) => !open)}
                 aria-label={isSidebarOpen ? 'Close sidebar' : 'Open sidebar'}
               >
                 {isSidebarOpen ? (
                   <svg
-                    className="h-4 w-4 tulis-muted transition-colors group-hover:text-[color:var(--accent)]"
+                    className="h-4 w-4 tulis-muted transition-colors group-hover:text-[color:var(--text)]"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -1020,7 +1245,7 @@ export default function NotePage() {
                   </svg>
                 ) : (
                   <svg
-                    className="h-4 w-4 tulis-muted transition-colors group-hover:text-[color:var(--accent)]"
+                    className="h-4 w-4 tulis-muted transition-colors group-hover:text-[color:var(--text)]"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -1032,10 +1257,12 @@ export default function NotePage() {
                   </svg>
                 )}
               </button>
+            </div>
 
+            <div className="min-w-0">
               <input
                 ref={titleInputRef}
-                className={`min-w-0 flex-1 truncate rounded-[var(--rSm)] border px-2 py-1.5 text-[1.18rem] font-semibold tracking-tight placeholder:opacity-35 transition-colors focus:outline-none ${isTitleFocused
+                className={`min-w-0 w-full truncate rounded-[var(--rSm)] border px-2 py-1.5 text-[1.18rem] font-semibold tracking-tight placeholder:opacity-35 transition-colors focus:outline-none ${isTitleFocused
                   ? 'border-[color:var(--accent)] bg-[color:var(--surface2)]'
                   : 'border-transparent bg-transparent'
                   }`}
@@ -1054,43 +1281,165 @@ export default function NotePage() {
               />
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center justify-end gap-2">
+              {!isReadOnly && ready && (
+                <span className={`hidden w-[6.25rem] shrink-0 items-center justify-end gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] md:inline-flex ${syncStatus === 'error' ? 'text-red-500' : 'tulis-muted'}`}>
+                  {syncStatus === 'loading'
+                    ? 'Loading'
+                    : syncStatus === 'syncing'
+                      ? 'Syncing'
+                      : syncStatus === 'error'
+                        ? 'Failed'
+                        : 'Synced'}
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${syncStatus === 'syncing'
+                      ? 'bg-[color:var(--text2)]'
+                      : syncStatus === 'loading'
+                        ? 'bg-[color:var(--text3)]'
+                      : syncStatus === 'error'
+                        ? 'bg-red-500'
+                        : 'bg-[color:var(--text2)]'
+                      }`}
+                  />
+                </span>
+              )}
+
               {!isReadOnly && (
                 <>
-                  <div className="relative" ref={tagPopoverRef}>
+                  <button
+                    type="button"
+                    onPointerDown={(event) => {
+                      if (!canUndo) return;
+                      event.preventDefault();
+                      editor?.chain().focus().undo().run();
+                    }}
+                    onKeyDown={(event) => {
+                      if (!canUndo) return;
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      editor?.chain().focus().undo().run();
+                    }}
+                    disabled={!canUndo}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${canUndo
+                      ? 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
+                      : 'cursor-not-allowed border-[color:var(--border2)] text-[color:var(--text3)] opacity-55'}`}
+                    aria-label="Undo"
+                    title="Undo"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" aria-hidden="true">
+                      <path d="M9 14 4 9l5-5" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M4 9h11a4 4 0 1 1 0 8h-1" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+
+                  <button
+                    type="button"
+                    onPointerDown={(event) => {
+                      if (!canRedo) return;
+                      event.preventDefault();
+                      editor?.chain().focus().redo().run();
+                    }}
+                    onKeyDown={(event) => {
+                      if (!canRedo) return;
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      editor?.chain().focus().redo().run();
+                    }}
+                    disabled={!canRedo}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${canRedo
+                      ? 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
+                      : 'cursor-not-allowed border-[color:var(--border2)] text-[color:var(--text3)] opacity-55'}`}
+                    aria-label="Redo"
+                    title="Redo"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" aria-hidden="true">
+                      <path d="m15 14 5-5-5-5" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M20 9H9a4 4 0 1 0 0 8h1" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+
+                  <div className="relative" ref={labelPopoverRef}>
                     <button
                       type="button"
                       onClick={() => {
-                        if (isTagPopoverOpen) {
-                          setIsTagPopoverOpen(false);
-                          setTagInput('');
+                        if (isHeaderActionsMenuOpen) {
+                          setIsHeaderActionsMenuOpen(false);
                           return;
                         }
-                        openTagPopover();
+                        setIsLabelPopoverOpen(false);
+                        setLabelInput('');
+                        setIsHeaderActionsMenuOpen(true);
                       }}
-                      className={`inline-flex h-8 rounded-[var(--rSm)] border text-[10px] font-semibold uppercase tracking-[0.1em] transition-colors ${hasTags ? 'items-center gap-1 px-2' : 'w-8 items-center justify-center px-0'} ${isTagPopoverOpen
-                        ? 'border-[color:var(--accent)] text-[color:var(--accent)] bg-[color:var(--surface2)]'
+                      className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${isHeaderActionsMenuOpen || isLabelPopoverOpen
+                        ? 'border-[color:var(--border)] text-[color:var(--text)] bg-[color:var(--surface2)]'
                         : 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
                         }`}
-                      aria-label="Manage tags"
-                      title="Manage tags"
+                      aria-haspopup="menu"
+                      aria-expanded={isHeaderActionsMenuOpen}
+                      aria-label="Open note actions"
+                      title="Note actions"
                     >
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="m20 13-7 7H4v-9l7-7 9 9Z" strokeLinecap="round" strokeLinejoin="round" />
-                        <circle cx="7.5" cy="7.5" r="1.5" />
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <circle cx="12" cy="5" r="1.8" />
+                        <circle cx="12" cy="12" r="1.8" />
+                        <circle cx="12" cy="19" r="1.8" />
                       </svg>
-                      {hasTags ? `${tags.length}` : null}
                     </button>
 
-                    {isTagPopoverOpen && (
+                    {isHeaderActionsMenuOpen && (
+                      <div className="absolute right-0 top-10 z-50 min-w-[196px] rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] p-1.5 shadow-sm">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            openLabelPopover();
+                          }}
+                          className="flex w-full items-center justify-between rounded-[calc(var(--rSm)-2px)] px-2.5 py-2 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]"
+                        >
+                          <span>Manage labels</span>
+                          {hasLabels ? (
+                            <span className="rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-1.5 py-0.5 text-[10px] font-semibold text-[color:var(--text)]">
+                              {labels.length}
+                            </span>
+                          ) : null}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsHeaderActionsMenuOpen(false);
+                            void togglePinned();
+                          }}
+                          className="mt-0.5 flex w-full items-center rounded-[calc(var(--rSm)-2px)] px-2.5 py-2 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]"
+                        >
+                          {pinned ? 'Unpin note' : 'Pin note'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearCompletedTasks}
+                          className="mt-0.5 flex w-full items-center rounded-[calc(var(--rSm)-2px)] px-2.5 py-2 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]"
+                        >
+                          Clear completed tasks
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void moveCurrentNoteToTrash();
+                          }}
+                          className="mt-0.5 flex w-full items-center rounded-[calc(var(--rSm)-2px)] px-2.5 py-2 text-left text-xs text-red-500 transition-colors hover:bg-[color:var(--surface2)]"
+                        >
+                          Move to Trash
+                        </button>
+                      </div>
+                    )}
+
+                    {isLabelPopoverOpen && (
                       <div className="absolute right-0 top-10 z-50 w-[300px] max-w-[calc(100vw-1rem)] rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)] p-3 shadow-sm">
                         <div className="mb-2 flex items-center justify-between">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] tulis-muted">Tags</p>
-                          {hasTags && (
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] tulis-muted">Labels</p>
+                          {hasLabels && (
                             <button
                               type="button"
                               onClick={() => {
-                                void saveTagsNow([]);
+                                void saveLabelsNow([]);
                               }}
                               className="text-[10px] font-medium uppercase tracking-[0.08em] tulis-muted transition-colors hover:text-[color:var(--text)]"
                             >
@@ -1099,9 +1448,9 @@ export default function NotePage() {
                           )}
                         </div>
 
-                        {hasTags && (
+                        {hasLabels && (
                           <div className="mb-2 flex flex-wrap gap-1.5">
-                            {tags.map((tag) => (
+                            {labels.map((tag) => (
                               <span
                                 key={tag}
                                 className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border2)] bg-[color:var(--surface2)] px-2 py-1 text-xs font-medium tulis-text"
@@ -1110,10 +1459,10 @@ export default function NotePage() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    void saveTagsNow(tags.filter((item) => item !== tag));
+                                    void saveLabelsNow(labels.filter((item) => item !== tag));
                                   }}
                                   className="rounded-full p-0.5 tulis-muted transition-colors hover:text-[color:var(--text)]"
-                                  aria-label={`Remove ${tag} tag`}
+                                  aria-label={`Remove ${tag} label`}
                                 >
                                   <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">
                                     <line x1="6" y1="6" x2="18" y2="18" strokeLinecap="round" />
@@ -1128,50 +1477,50 @@ export default function NotePage() {
                         <form
                           onSubmit={(event) => {
                             event.preventDefault();
-                            addTagFromInput();
+                            addLabelFromInput();
                           }}
                         >
                           <input
-                            ref={tagInputRef}
-                            value={tagInput}
-                            onChange={(event) => setTagInput(event.target.value)}
+                            ref={labelInputRef}
+                            value={labelInput}
+                            onChange={(event) => setLabelInput(event.target.value)}
                             onKeyDown={(event) => {
                               if ((event.key === 'Enter' || event.key === ',') && !event.nativeEvent.isComposing) {
                                 event.preventDefault();
-                                addTagFromInput();
+                                addLabelFromInput();
                               }
                               if (event.key === 'Escape') {
                                 event.preventDefault();
-                                setIsTagPopoverOpen(false);
-                                setTagInput('');
+                                setIsLabelPopoverOpen(false);
+                                setLabelInput('');
                               }
-                              if (event.key === 'Backspace' && !tagInput.trim() && tags.length > 0) {
+                              if (event.key === 'Backspace' && !labelInput.trim() && labels.length > 0) {
                                 event.preventDefault();
-                                void saveTagsNow(tags.slice(0, -1));
+                                void saveLabelsNow(labels.slice(0, -1));
                               }
                             }}
-                            placeholder={tags.length >= 10 ? 'Tag limit reached' : 'Press enter to add tag'}
-                            disabled={tags.length >= 10}
+                            placeholder={labels.length >= 10 ? 'Label limit reached' : 'Press enter to add label'}
+                            disabled={labels.length >= 10}
                             enterKeyHint="done"
                             autoCapitalize="none"
                             autoCorrect="off"
                             className="h-8 w-full rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface)] px-2.5 text-xs tulis-text placeholder:text-[color:var(--text3)] focus:border-[color:var(--accent)] focus:outline-none disabled:opacity-50"
                           />
                           <button type="submit" tabIndex={-1} aria-hidden="true" className="sr-only">
-                            Add tag
+                            Add label
                           </button>
                         </form>
 
-                        {tagSuggestions.length > 0 && (
+                        {labelSuggestions.length > 0 && (
                           <div className="mt-2 max-h-28 overflow-y-auto rounded-[var(--rSm)] border border-[color:var(--border2)] bg-[color:var(--surface2)] p-1">
-                            {tagSuggestions.map((tag) => (
+                            {labelSuggestions.map((tag) => (
                               <button
                                 key={tag}
                                 type="button"
                                 onClick={() => {
-                                  if (tags.includes(tag) || tags.length >= 10) return;
-                                  void saveTagsNow([...tags, tag]);
-                                  setTagInput('');
+                                  if (labels.includes(tag) || labels.length >= 10) return;
+                                  void saveLabelsNow([...labels, tag]);
+                                  setLabelInput('');
                                 }}
                                 className="w-full rounded-[var(--rSm)] px-2 py-1 text-left text-xs tulis-muted transition-colors hover:bg-[color:var(--surface)] hover:text-[color:var(--text)]"
                               >
@@ -1183,46 +1532,7 @@ export default function NotePage() {
                       </div>
                     )}
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void togglePinned();
-                    }}
-                    className={`inline-flex h-8 w-8 items-center justify-center rounded-[var(--rSm)] border transition-colors ${pinned
-                      ? 'border-[color:var(--accent)] text-[color:var(--accent)] bg-[color:var(--surface2)]'
-                      : 'border-[color:var(--border)] tulis-muted hover:bg-[color:var(--surface2)] hover:text-[color:var(--text)]'
-                      }`}
-                    aria-label={pinned ? 'Unpin note' : 'Pin note'}
-                    title={pinned ? 'Unpin note' : 'Pin note'}
-                  >
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="m12 17 4 4V9l3-5H5l3 5v12l4-4Z" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
                 </>
-              )}
-
-              {!isReadOnly && ready && (
-                <span className="hidden shrink-0 items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] tulis-muted sm:inline-flex">
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full ${syncStatus === 'syncing'
-                      ? 'bg-[color:var(--accent)]'
-                      : syncStatus === 'loading'
-                        ? 'bg-[color:var(--text3)]'
-                      : syncStatus === 'error'
-                        ? 'bg-[color:var(--text3)]'
-                        : 'bg-[color:var(--text2)]'
-                      }`}
-                  />
-                  {syncStatus === 'loading'
-                    ? 'Loading'
-                    : syncStatus === 'syncing'
-                      ? 'Syncing'
-                      : syncStatus === 'error'
-                        ? 'Failed'
-                        : 'Synced'}
-                </span>
               )}
             </div>
           </div>
@@ -1244,7 +1554,7 @@ export default function NotePage() {
           {isDeleted && (
             <div className="sticky top-3 z-30 mx-auto mb-4 max-w-[840px]" data-trash-banner>
               <div className="rounded-[var(--rMd)] border border-[color:var(--border2)] bg-[color:var(--surface2)] px-3 py-2.5 shadow-md">
-                <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
+                <div className="flex flex-col items-center justify-between gap-2 text-center sm:flex-row sm:items-center sm:text-left">
                   <p className="text-xs tulis-muted">
                     This note is in Trash • Auto-deletes on{' '}
                     <span className="font-semibold text-[color:var(--text)]">
@@ -1254,7 +1564,7 @@ export default function NotePage() {
                     </span>
                     .
                   </p>
-                  <div className="flex items-center gap-2">
+                  <div className="flex w-full items-center justify-center gap-2 sm:w-auto">
                     <button
                       type="button"
                       onClick={() => {
