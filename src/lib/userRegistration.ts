@@ -31,7 +31,7 @@ export type TulisRegistrationResolution =
   | { status: 'signed_out'; check: TulisRegistrationCheck }
   | { status: 'registered'; check: TulisRegistrationCheck }
   | { status: 'created_shared_user_and_registered'; check: TulisRegistrationCheck }
-  | { status: 'activation_required'; check: TulisRegistrationCheck };
+  | { status: 'activated_existing_shared_user_and_registered'; check: TulisRegistrationCheck };
 
 function getAppsMap(data: SharedUserRecord | null): Record<string, unknown> | null {
   if (!data) return null;
@@ -148,5 +148,12 @@ export async function resolveTulisRegistration(user: User | null): Promise<Tulis
     };
   }
 
-  return { status: 'activation_required', check };
+  await activateExistingSharedUserForTulis(user);
+  return {
+    status: 'activated_existing_shared_user_and_registered',
+    check: {
+      ...check,
+      isRegisteredForTulis: true,
+    },
+  };
 }

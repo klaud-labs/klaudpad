@@ -25,16 +25,9 @@ export function useAuthGuard() {
 
       void (async () => {
         try {
-          const registration = await resolveTulisRegistration(currentUser);
+          await resolveTulisRegistration(currentUser);
 
           if (cancelled) return;
-
-          if (registration.status === 'activation_required') {
-            setUser(null);
-            setLoading(false);
-            router.replace('/login');
-            return;
-          }
 
           setUser(currentUser);
           setLoading(false);

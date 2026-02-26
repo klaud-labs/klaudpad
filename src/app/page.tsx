@@ -19,11 +19,7 @@ export default function Home() {
       }
 
       try {
-        const registration = await resolveTulisRegistration(user);
-        if (registration.status === 'activation_required') {
-          router.replace('/login');
-          return;
-        }
+        await resolveTulisRegistration(user);
       } catch (error) {
         console.error('Failed to resolve user app registration:', error);
       }

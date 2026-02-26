@@ -53,12 +53,7 @@ export default function NotesEntry() {
       measureDevPerf('notes-entry:mount-to-auth', 'notes-entry:mount', 'notes-entry:auth-resolved');
 
       try {
-        const registration = await resolveTulisRegistration(user);
-        if (registration.status === 'activation_required') {
-          hasNavigated = true;
-          router.replace('/login');
-          return;
-        }
+        await resolveTulisRegistration(user);
       } catch (error) {
         console.error('Failed to resolve user app registration:', error);
       }
