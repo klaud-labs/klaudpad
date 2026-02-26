@@ -114,8 +114,8 @@ export function NotesDrawer({ isSidebarOpen, currentNoteId, sidebarMode, onSideb
   const lastActiveNoteIdRef = useRef<string | null>(null);
   const previousActiveNoteIdRef = useRef<string | null>(null);
   const currentRouteNoteIdRef = useRef<string>('');
-  const settingsSheetCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const signOutArmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsSheetCloseTimeoutRef = useRef<number | null>(null);
+  const signOutArmTimeoutRef = useRef<number | null>(null);
 
   const closeOnMobile = useCallback(() => {
     if (window.matchMedia('(max-width: 767px)').matches) {
