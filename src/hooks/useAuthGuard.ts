@@ -7,8 +7,10 @@ import { resolveTulisRegistration } from '@/lib/userRegistration';
 
 export function useAuthGuard() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(() => auth.currentUser);
-  const [loading, setLoading] = useState(() => !auth.currentUser);
+  // Keep guard loading until auth + registration checks settle to avoid
+  // rendering an empty note shell and immediately reverting to a skeleton.
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;

@@ -2,7 +2,7 @@
 
 export function NotePageSkeleton() {
   return (
-    <div className="flex h-screen w-full overflow-hidden tulis-bg font-sans">
+    <div className="flex h-[100dvh] w-full overflow-hidden tulis-bg font-sans">
       <aside className="hidden h-full w-[312px] shrink-0 border-r border-[color:var(--border2)] bg-[color:var(--sidebar)] md:block">
         <div className="flex h-full min-h-0 flex-col p-3">
           <div className="h-10 rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface)]" />
@@ -24,7 +24,7 @@ export function NotePageSkeleton() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[color:var(--canvas)]">
-        <header className="shrink-0 border-b border-[color:var(--divider)] bg-[color:var(--header)] px-3 py-2.5 sm:px-4">
+        <header className="sticky top-0 z-40 shrink-0 border-b border-[color:var(--divider)] bg-[color:var(--header)] px-3 py-2.5 sm:px-4">
           <div className="mx-auto grid min-w-0 max-w-[840px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[auto_minmax(0,1fr)_13.75rem] sm:gap-3">
             <div className="flex items-center">
               <div className="h-9 w-9 rounded-[var(--rSm)] border border-[color:var(--border)] bg-[color:var(--surface)]" />
@@ -39,7 +39,7 @@ export function NotePageSkeleton() {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-5 sm:px-6 sm:pb-16">
+        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-24 pt-5 sm:px-6 sm:pb-16">
           <div className="mx-auto min-h-full max-w-[840px] min-w-0">
             <div className="space-y-3 pt-1">
               <div className="h-5 w-[62%] rounded bg-[color:var(--surface2)] opacity-95" />
