@@ -193,6 +193,7 @@ export default function NoteClient() {
   const [showJumpToTop, setShowJumpToTop] = useState(false);
   const [pullRefreshDistance, setPullRefreshDistance] = useState(0);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const [isPullClosing, setIsPullClosing] = useState(false);
   const hasHydratedContentRef = useRef(false);
   const lastSubmittedContentRef = useRef<JSONContent | null>(null);
   const changeVersionRef = useRef(0);
@@ -1103,9 +1104,11 @@ export default function NoteClient() {
     } finally {
       pullRefreshInFlightRef.current = false;
       setIsPullRefreshing(false);
+      setIsPullClosing(true);
       // Wait a tiny bit more for a smooth final collapse
       window.setTimeout(() => {
         setPullRefreshDistance(0);
+        setIsPullClosing(false);
       }, 100);
     }
   }, [router]);
@@ -1547,7 +1550,7 @@ export default function NoteClient() {
               )}
             </div>
 
-            {(isPullRefreshing || pullRefreshDistance > PULL_REFRESH_TRIGGER_PX * 0.4) && (
+            {(isPullRefreshing || (pullRefreshDistance > PULL_REFRESH_TRIGGER_PX * 0.4 && !isPullClosing)) && (
               <p
                 className={`mt-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[color:var(--accent)] transition-opacity duration-300 ${isPullRefreshing ? 'animate-pulse' : ''}`}
                 style={{
