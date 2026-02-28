@@ -1,4 +1,4 @@
-import { DocumentData, QueryDocumentSnapshot, getDocs, limit, orderBy, query, startAfter, where } from 'firebase/firestore';
+import { DocumentData, Query, QueryDocumentSnapshot, getDocs, limit, orderBy, query, startAfter, where } from 'firebase/firestore';
 import { appNotesCollection } from '@/lib/firestorePaths';
 import { db } from '@/lib/firebase';
 
@@ -16,7 +16,7 @@ async function findLatestByOrder({
     let cursor: QueryDocumentSnapshot<DocumentData> | null = null;
 
     while (true) {
-      const notesQuery = cursor
+      const notesQuery: Query<DocumentData> = cursor
         ? query(
           appNotesCollection(db),
           where('ownerUid', '==', ownerUid),
