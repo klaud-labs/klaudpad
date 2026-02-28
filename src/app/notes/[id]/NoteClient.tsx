@@ -1480,12 +1480,6 @@ export default function NoteClient() {
 
   const pullRefreshProgress = Math.min(1, pullRefreshDistance / PULL_REFRESH_TRIGGER_PX);
   const showPullRefreshCloud = pullRefreshDistance > 0 || isPullRefreshing;
-  const pullRefreshLabel = isPullRefreshing
-    ? 'Refreshing notes'
-    : pullRefreshProgress >= 1
-      ? 'Release to refresh'
-      : 'Pull to refresh';
-  const pullRefreshBarScale = isPullRefreshing ? 1 : Math.max(0.08, pullRefreshProgress);
   const jumpToTopBottom = 12
     + mobileViewportOcclusionBottom
     + (selectionToolbar.visible && selectionToolbar.isMobile ? 64 : 0);
@@ -1502,17 +1496,16 @@ export default function NoteClient() {
       {showPullRefreshCloud && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-[62] flex justify-center px-3">
           <div
-            className="mt-2 w-full max-w-[320px] rounded-[var(--rMd)] border border-[color:var(--border)] bg-[color:var(--surface)]/96 px-2.5 py-2 shadow-[var(--shadow1)] backdrop-blur-[3px]"
+            className="mt-2 flex h-11 w-11 items-center justify-center rounded-full border border-[color:var(--border)] bg-[color:var(--surface)]/96 shadow-[var(--shadow1)] backdrop-blur-[3px]"
             style={{
-              transform: `translateY(${Math.round(pullRefreshDistance * 0.9)}px) scale(${0.965 + (pullRefreshProgress * 0.035)})`,
+              transform: `translateY(${Math.round(pullRefreshDistance * 0.9)}px) scale(${0.92 + (pullRefreshProgress * 0.08)})`,
               opacity: 0.25 + (pullRefreshProgress * 0.75),
             }}
             aria-hidden="true"
           >
-            <div className="flex items-center gap-2.5">
-              <div className="relative flex h-7 w-7 items-center justify-center rounded-[var(--rSm)] border border-[color:var(--border2)] bg-[color:var(--surface2)]">
+            <div className="relative flex h-7 w-7 items-center justify-center">
                 <svg
-                  className={`h-[18px] w-[18px] text-[color:var(--accent)] ${isPullRefreshing ? 'tulis-cloud-drift' : ''}`}
+                  className={`h-5 w-5 text-[color:var(--accent)] ${isPullRefreshing ? 'tulis-cloud-drift' : ''}`}
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -1524,23 +1517,19 @@ export default function NoteClient() {
                     strokeLinejoin="round"
                   />
                 </svg>
-                <span
-                  className={`absolute bottom-0.5 left-2 h-1.5 w-[2px] rounded-full bg-[color:var(--accent)]/85 ${isPullRefreshing ? 'tulis-cloud-drop' : ''}`}
-                  style={{ opacity: 0.2 + (pullRefreshProgress * 0.8) }}
-                />
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[10px] font-semibold uppercase tracking-[0.11em] tulis-muted">
-                  {pullRefreshLabel}
-                </p>
-                <div className="mt-1 h-1 overflow-hidden rounded-full bg-[color:var(--surface2)]">
-                  <span
-                    className="block h-full origin-left rounded-full bg-[color:var(--accent)] transition-transform duration-150"
-                    style={{ transform: `scaleX(${pullRefreshBarScale})` }}
-                  />
-                </div>
-              </div>
+                {isPullRefreshing && (
+                  <>
+                    <span className="tulis-cloud-drop absolute bottom-[-2px] left-[7px] h-2 w-[2px] rounded-full bg-[color:var(--accent)]/85" />
+                    <span
+                      className="tulis-cloud-drop absolute bottom-[-2px] left-[11px] h-2.5 w-[2px] rounded-full bg-[color:var(--accent)]/85"
+                      style={{ animationDelay: '0.14s' }}
+                    />
+                    <span
+                      className="tulis-cloud-drop absolute bottom-[-2px] left-[15px] h-2 w-[2px] rounded-full bg-[color:var(--accent)]/85"
+                      style={{ animationDelay: '0.28s' }}
+                    />
+                  </>
+                )}
             </div>
           </div>
         </div>
