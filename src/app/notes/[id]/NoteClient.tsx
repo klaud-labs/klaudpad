@@ -31,6 +31,14 @@ type SelectionToolbarState = {
   top: number;
 };
 type SidebarMode = 'notes' | 'trash';
+type CachedNoteMetadata = {
+  title: string;
+  labels: string[];
+  pinned: boolean;
+  isDeleted: boolean;
+  deletedAtMs: number | null;
+  updatedAtMs: number | null;
+};
 const PULL_REFRESH_TRIGGER_PX = 84;
 const PULL_REFRESH_MAX_PX = 132;
 
@@ -155,6 +163,48 @@ function stripCompletedTasksFromDoc(doc: JSONContent): { doc: JSONContent; remov
   return { doc: result.node, removedCount: result.removedCount };
 }
 
+function noteMetadataCacheKey(userId: string, noteId: string): string {
+  return `tulis:note-meta:${userId}:${noteId}`;
+}
+
+function readCachedNoteMetadata(userId: string, noteId: string): CachedNoteMetadata | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(noteMetadataCacheKey(userId, noteId));
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<CachedNoteMetadata> | null;
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    const cachedTitle = typeof parsed.title === 'string' ? parsed.title : '';
+    const cachedLabels = Array.isArray(parsed.labels)
+      ? normalizeLabels(parsed.labels.filter((value): value is string => typeof value === 'string'))
+      : [];
+
+    return {
+      title: cachedTitle,
+      labels: cachedLabels,
+      pinned: Boolean(parsed.pinned),
+      isDeleted: parsed.isDeleted === true,
+      deletedAtMs: typeof parsed.deletedAtMs === 'number' && Number.isFinite(parsed.deletedAtMs) ? parsed.deletedAtMs : null,
+      updatedAtMs: typeof parsed.updatedAtMs === 'number' && Number.isFinite(parsed.updatedAtMs) ? parsed.updatedAtMs : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedNoteMetadata(userId: string, noteId: string, metadata: CachedNoteMetadata): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.sessionStorage.setItem(noteMetadataCacheKey(userId, noteId), JSON.stringify(metadata));
+  } catch {
+    // Ignore storage write failures.
+  }
+}
+
 export default function NoteClient() {
   const router = useRouter();
   const routeParams = useParams<{ id: string }>();
@@ -177,6 +227,7 @@ export default function NoteClient() {
   });
   const [isLabelPopoverOpen, setIsLabelPopoverOpen] = useState(false);
   const [isHeaderActionsMenuOpen, setIsHeaderActionsMenuOpen] = useState(false);
+  const [metadataReady, setMetadataReady] = useState(false);
   const [ready, setReady] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('loading');
   const [isTitleFocused, setIsTitleFocused] = useState(false);
@@ -194,6 +245,7 @@ export default function NoteClient() {
   const [pullRefreshDistance, setPullRefreshDistance] = useState(0);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const [isPullClosing, setIsPullClosing] = useState(false);
+  const [remoteContent, setRemoteContent] = useState<JSONContent | null>(null);
   const hasHydratedContentRef = useRef(false);
   const lastSubmittedContentRef = useRef<JSONContent | null>(null);
   const changeVersionRef = useRef(0);
@@ -235,9 +287,18 @@ export default function NoteClient() {
   useEffect(() => {
     if (noteId) {
       setSyncStatus('loading');
+      setMetadataReady(false);
+      setReady(false);
+      setTitle('');
+      setLabels([]);
+      setPinned(false);
+      setIsDeleted(false);
+      setDeletedAt(null);
       setShowJumpToTop(false);
       setPullRefreshDistance(0);
       setIsPullRefreshing(false);
+      setIsPullClosing(false);
+      setRemoteContent(null);
     }
   }, [noteId]);
 
@@ -255,6 +316,25 @@ export default function NoteClient() {
       markDevPerf('notes-note:route-start');
     }
   }, [noteId]);
+
+  useEffect(() => {
+    if (!noteId || !user) return;
+
+    const cachedMetadata = readCachedNoteMetadata(user.uid, noteId);
+    if (!cachedMetadata) return;
+
+    setTitle(cachedMetadata.title);
+    setLabels(cachedMetadata.labels);
+    setPinned(cachedMetadata.pinned);
+    setIsDeleted(cachedMetadata.isDeleted);
+    setDeletedAt(cachedMetadata.deletedAtMs !== null ? Timestamp.fromMillis(cachedMetadata.deletedAtMs) : null);
+    if (cachedMetadata.isDeleted) {
+      setSidebarMode('trash');
+      setIsHeaderActionsMenuOpen(false);
+      setIsLabelPopoverOpen(false);
+    }
+    setMetadataReady(true);
+  }, [noteId, user]);
 
   const markDirty = useCallback(() => {
     changeVersionRef.current += 1;
@@ -325,8 +405,6 @@ export default function NoteClient() {
     }
     if (!ready) return;
 
-    const byOwnerUid = query(appNotesCollection(db), where('ownerUid', '==', user.uid));
-
     const collectLabels = (docs: Array<{ data: () => Record<string, unknown> }>) => {
       const deduped = new Set<string>();
 
@@ -345,6 +423,7 @@ export default function NoteClient() {
     };
 
     let ownerUidDocs: Array<{ data: () => Record<string, unknown> }> = [];
+    let unsubscribeOwnerUid: (() => void) | null = null;
 
     const sync = () => {
       setAllUserLabels(collectLabels(ownerUidDocs));
@@ -352,25 +431,30 @@ export default function NoteClient() {
       setHasLoadedUserNotes(true);
     };
 
-    const unsubscribeOwnerUid = onSnapshot(byOwnerUid, (snapshot) => {
-      ownerUidDocs = snapshot.docs;
-      sync();
-    }, (error) => {
-      if (error.code === 'permission-denied') {
-        console.warn('Label sync permission denied for ownerUid query.');
-        return;
-      }
-      console.error('Label sync error (ownerUid):', error);
-      setHasLoadedUserNotes(true);
-    });
+    const delayMs = 120;
+    const timeoutId = window.setTimeout(() => {
+      const byOwnerUid = query(appNotesCollection(db), where('ownerUid', '==', user.uid));
+      unsubscribeOwnerUid = onSnapshot(byOwnerUid, (snapshot) => {
+        ownerUidDocs = snapshot.docs;
+        sync();
+      }, (error) => {
+        if (error.code === 'permission-denied') {
+          console.warn('Label sync permission denied for ownerUid query.');
+          return;
+        }
+        console.error('Label sync error (ownerUid):', error);
+        setHasLoadedUserNotes(true);
+      });
+    }, delayMs);
 
     return () => {
-      unsubscribeOwnerUid();
+      window.clearTimeout(timeoutId);
+      unsubscribeOwnerUid?.();
     };
   }, [ready, user]);
 
   useEffect(() => {
-    if (!noteId || !editor || !user) return;
+    if (!noteId || !user) return;
 
     const noteRef = appNoteDoc(db, noteId);
     const unsubscribe = onSnapshot(noteRef, (snapshot) => {
@@ -386,71 +470,43 @@ export default function NoteClient() {
       }
 
       const data = snapshot.data();
-      setTitle(typeof data.title === 'string' ? data.title : '');
-      setPinned(Boolean(data.pinned));
-      const deleted = data.isDeleted === true;
-      setIsDeleted(deleted);
-      setDeletedAt((data.deletedAt as Timestamp | null) || null);
-      if (deleted) {
+      const nextTitle = typeof data.title === 'string' ? data.title : '';
+      const nextPinned = Boolean(data.pinned);
+      const nextDeleted = data.isDeleted === true;
+      const nextDeletedAt = (data.deletedAt as Timestamp | null) || null;
+      const nextUpdatedAt = (data.updatedAt as Timestamp | null) || null;
+      const incomingLabels = Array.isArray(data.labels)
+        ? normalizeLabels(data.labels.filter((value): value is string => typeof value === 'string'))
+        : [];
+
+      setTitle(nextTitle);
+      setPinned(nextPinned);
+      setIsDeleted(nextDeleted);
+      setDeletedAt(nextDeletedAt);
+      setLabels(incomingLabels);
+      setMetadataReady(true);
+
+      if (nextDeleted) {
         setSidebarMode('trash');
         setIsHeaderActionsMenuOpen(false);
         setIsLabelPopoverOpen(false);
       }
+
+      setRemoteContent(data.contentJson || { type: 'doc', content: [] });
+
+      writeCachedNoteMetadata(user.uid, noteId, {
+        title: nextTitle,
+        labels: incomingLabels,
+        pinned: nextPinned,
+        isDeleted: nextDeleted,
+        deletedAtMs: nextDeletedAt?.toMillis?.() ?? null,
+        updatedAtMs: nextUpdatedAt?.toMillis?.() ?? null,
+      });
+
       try {
         window.localStorage.setItem(`tulis:lastNoteId:${user.uid}`, noteId);
       } catch {
         // Ignore localStorage write failures.
-      }
-
-      const incomingLabels = Array.isArray(data.labels)
-        ? normalizeLabels(data.labels.filter((value): value is string => typeof value === 'string'))
-        : [];
-      setLabels(incomingLabels);
-
-      const newContent = data.contentJson || { type: 'doc', content: [] };
-      const currentContent = editor.getJSON();
-      const isInitialHydration = !hasHydratedContentRef.current;
-      const hasPendingLocalContent = changeVersionRef.current > savedVersionRef.current;
-      const remoteMatchesLastSubmitted =
-        !!lastSubmittedContentRef.current && isEquivalentEditorContent(newContent, lastSubmittedContentRef.current);
-      const remoteMatchesCurrentEditor = isEquivalentEditorContent(newContent, currentContent);
-      const isExpectedLocalContentEcho =
-        !isInitialHydration &&
-        remoteMatchesLastSubmitted;
-      const shouldApplyRemoteContent = isInitialHydration || !hasPendingLocalContent;
-
-      if (!remoteMatchesCurrentEditor && !isExpectedLocalContentEcho && shouldApplyRemoteContent) {
-        const selectionBefore = editor.state.selection;
-        editor
-          .chain()
-          .setMeta('addToHistory', false)
-          .setContent(newContent, { emitUpdate: false })
-          .run();
-
-        // Keep cursor position stable when syncing in-place to avoid jumping to the end.
-        if (editor.isFocused) {
-          const minPos = 1;
-          const maxPos = editor.state.doc.content.size;
-          const from = Math.max(minPos, Math.min(selectionBefore.from, maxPos));
-          const to = Math.max(minPos, Math.min(selectionBefore.to, maxPos));
-          editor.commands.setTextSelection({ from, to });
-        }
-      }
-
-      hasHydratedContentRef.current = true;
-      if (isInitialHydration && !perfMarksRef.current.contentAppliedMarked) {
-        perfMarksRef.current.contentAppliedMarked = true;
-        markDevPerf('notes-note:content-applied');
-        measureDevPerf('notes-note:route-to-content-applied', 'notes-note:route-start', 'notes-note:content-applied');
-      }
-      setReady(true);
-      if (!perfMarksRef.current.readyMarked) {
-        perfMarksRef.current.readyMarked = true;
-        markDevPerf('notes-note:ready');
-        measureDevPerf('notes-note:route-to-ready', 'notes-note:route-start', 'notes-note:ready');
-      }
-      if (changeVersionRef.current === savedVersionRef.current) {
-        setSyncStatus('synced');
       }
     }, (error) => {
       if (error.code === 'permission-denied' || error.code === 'not-found') {
@@ -461,7 +517,58 @@ export default function NoteClient() {
     });
 
     return () => unsubscribe();
-  }, [noteId, editor, user, redirectToAccessibleNote]);
+  }, [noteId, user, redirectToAccessibleNote]);
+
+  useEffect(() => {
+    if (!editor || !remoteContent) return;
+
+    const currentContent = editor.getJSON();
+    const isInitialHydration = !hasHydratedContentRef.current;
+    const hasPendingLocalContent = changeVersionRef.current > savedVersionRef.current;
+    const remoteMatchesLastSubmitted =
+      !!lastSubmittedContentRef.current && isEquivalentEditorContent(remoteContent, lastSubmittedContentRef.current);
+    const remoteMatchesCurrentEditor = isEquivalentEditorContent(remoteContent, currentContent);
+    const isExpectedLocalContentEcho =
+      !isInitialHydration &&
+      remoteMatchesLastSubmitted;
+    const shouldApplyRemoteContent = isInitialHydration || !hasPendingLocalContent;
+
+    if (!remoteMatchesCurrentEditor && !isExpectedLocalContentEcho && shouldApplyRemoteContent) {
+      const selectionBefore = editor.state.selection;
+      editor
+        .chain()
+        .setMeta('addToHistory', false)
+        .setContent(remoteContent, { emitUpdate: false })
+        .run();
+
+      // Keep cursor position stable when syncing in-place to avoid jumping to the end.
+      if (editor.isFocused) {
+        const minPos = 1;
+        const maxPos = editor.state.doc.content.size;
+        const from = Math.max(minPos, Math.min(selectionBefore.from, maxPos));
+        const to = Math.max(minPos, Math.min(selectionBefore.to, maxPos));
+        editor.commands.setTextSelection({ from, to });
+      }
+    }
+
+    hasHydratedContentRef.current = true;
+    if (isInitialHydration && !perfMarksRef.current.contentAppliedMarked) {
+      perfMarksRef.current.contentAppliedMarked = true;
+      markDevPerf('notes-note:content-applied');
+      measureDevPerf('notes-note:route-to-content-applied', 'notes-note:route-start', 'notes-note:content-applied');
+    }
+    if (!ready) {
+      setReady(true);
+    }
+    if (!perfMarksRef.current.readyMarked) {
+      perfMarksRef.current.readyMarked = true;
+      markDevPerf('notes-note:ready');
+      measureDevPerf('notes-note:route-to-ready', 'notes-note:route-start', 'notes-note:ready');
+    }
+    if (changeVersionRef.current === savedVersionRef.current) {
+      setSyncStatus('synced');
+    }
+  }, [editor, ready, remoteContent]);
 
   useEffect(() => {
     if (!editor) return;
@@ -1372,7 +1479,7 @@ export default function NoteClient() {
   }, []);
 
   useEffect(() => {
-    if (!noteId || !ready || !shouldFocusTitle) return;
+    if (!noteId || !metadataReady || !shouldFocusTitle) return;
     if (focusedTitleForNoteRef.current === noteId) return;
 
     const input = titleInputRef.current;
@@ -1387,7 +1494,7 @@ export default function NoteClient() {
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [noteId, ready, shouldFocusTitle]);
+  }, [metadataReady, noteId, shouldFocusTitle]);
 
   const hasLabels = labels.length > 0;
   const displayTitle = isTrashEmptyView ? '' : title;
@@ -1495,8 +1602,10 @@ export default function NoteClient() {
   const jumpToTopBottom = 12
     + mobileViewportOcclusionBottom
     + (selectionToolbar.visible && selectionToolbar.isMobile ? 64 : 0);
+  const showTitleSkeleton = !metadataReady;
+  const canShowHeaderActions = !isReadOnly && metadataReady;
 
-  if (!noteId || authLoading || !user || !ready) {
+  if (!noteId || authLoading || !user) {
     return <NotePageSkeleton />;
   }
 
@@ -1609,29 +1718,33 @@ export default function NoteClient() {
             </div>
 
             <div className="min-w-0">
-              <input
-                ref={titleInputRef}
-                className={`min-w-0 w-full truncate rounded-[var(--rSm)] border px-2 py-1.5 text-[1.18rem] font-semibold tracking-tight placeholder:opacity-35 transition-colors focus:outline-none ${isTitleFocused
-                  ? 'border-[color:var(--accent)] bg-[color:var(--surface2)]'
-                  : 'border-transparent bg-transparent'
-                  }`}
-                value={displayTitle}
-                readOnly={isReadOnly}
-                onChange={(event) => {
-                  if (isReadOnly) return;
-                  const value = event.target.value;
-                  setTitle(value);
-                  const version = markDirty();
-                  scheduleTitleSave({ newTitle: value, version });
-                }}
-                onFocus={() => setIsTitleFocused(true)}
-                onBlur={() => setIsTitleFocused(false)}
-                placeholder={titlePlaceholder}
-              />
+              {showTitleSkeleton ? (
+                <div className="h-8 animate-pulse rounded-[var(--rSm)] bg-[color:var(--surface2)]" aria-hidden="true" />
+              ) : (
+                <input
+                  ref={titleInputRef}
+                  className={`min-w-0 w-full truncate rounded-[var(--rSm)] border px-2 py-1.5 text-[1.18rem] font-semibold tracking-tight placeholder:opacity-35 transition-colors focus:outline-none ${isTitleFocused
+                    ? 'border-[color:var(--accent)] bg-[color:var(--surface2)]'
+                    : 'border-transparent bg-transparent'
+                    }`}
+                  value={displayTitle}
+                  readOnly={isReadOnly}
+                  onChange={(event) => {
+                    if (isReadOnly) return;
+                    const value = event.target.value;
+                    setTitle(value);
+                    const version = markDirty();
+                    scheduleTitleSave({ newTitle: value, version });
+                  }}
+                  onFocus={() => setIsTitleFocused(true)}
+                  onBlur={() => setIsTitleFocused(false)}
+                  placeholder={titlePlaceholder}
+                />
+              )}
             </div>
 
             <div className="flex shrink-0 items-center justify-end gap-2">
-              {!isReadOnly && ready && (
+              {canShowHeaderActions && ready && (
                 <span className={`hidden w-[6.25rem] shrink-0 items-center justify-end gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] md:inline-flex ${syncStatus === 'error' ? 'text-[color:var(--dangerText)]' : 'tulis-muted'}`}>
                   {syncStatus === 'loading'
                     ? 'Loading'
@@ -1653,7 +1766,7 @@ export default function NoteClient() {
                 </span>
               )}
 
-              {!isReadOnly && (
+              {canShowHeaderActions && (
                 <>
                   <button
                     type="button"
@@ -1947,10 +2060,21 @@ export default function NoteClient() {
             </div>
           ) : (
             <div ref={editorColumnRef} className="mx-auto min-h-[60vh] max-w-[840px] min-w-0">
-              <EditorContent
-                editor={editor}
-                className="prose prose-lg dark:prose-invert max-w-none focus:outline-none tulis-text"
-              />
+              {!ready ? (
+                <div className="space-y-3 pt-1" aria-hidden="true">
+                  <div className="h-5 w-[58%] animate-pulse rounded bg-[color:var(--surface2)]" />
+                  <div className="h-4 w-full animate-pulse rounded bg-[color:var(--surface2)]" />
+                  <div className="h-4 w-[91%] animate-pulse rounded bg-[color:var(--surface2)]" />
+                  <div className="h-4 w-[87%] animate-pulse rounded bg-[color:var(--surface2)]" />
+                  <div className="h-4 w-[95%] animate-pulse rounded bg-[color:var(--surface2)]" />
+                  <div className="h-4 w-[79%] animate-pulse rounded bg-[color:var(--surface2)]" />
+                </div>
+              ) : (
+                <EditorContent
+                  editor={editor}
+                  className="prose prose-lg dark:prose-invert max-w-none focus:outline-none tulis-text"
+                />
+              )}
             </div>
           )}
         </main>
